@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from .database import engine, Base
 from .airports import models as airport_models
-from .airports.airport_router import router as airport_router
+from .airports.router import router as airport_router
 
 Base.metadata.create_all(bind=engine)
 
