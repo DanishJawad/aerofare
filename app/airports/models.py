@@ -1,10 +1,12 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import String
+from sqlalchemy.orm import Mapped, mapped_column
+
 from ..database import Base
 
 class Airport(Base):
     __tablename__ = "airports"
 
-    id: int = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name: str = Column(String(50), index=True)
-    city: str = Column(String(50), index=True)
-    country: str = Column(String(50), index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), index=True)
+    city: Mapped[str] = mapped_column(String(50), index=True)
+    country: Mapped[str] = mapped_column(String(50), index=True)
