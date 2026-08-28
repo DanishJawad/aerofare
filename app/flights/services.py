@@ -1,0 +1,59 @@
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from typing import List
+
+from .models import Flight
+from .schemas import FlightCreate, FlightResponse, FlightUpdate, FlightSearch
+
+def create_flight(db: Session, flight: FlightCreate) -> FlightResponse:
+    new_flight = Flight(**flight.model_dump())
+    db.add(new_flight)
+    db.commit()
+    db.refresh(new_flight)
+    return new_flight
+
+def get_flights(db: Session) -> List[FlightResponse]:
+    stmt = select(Flight)
+    return list(db.execute(stmt).scalars().all())
+
+def get_flight_by_id(flight_id: int, db: Session) -> FlightResponse:
+    return db.get(Flight, flight_id)
+
+def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> FlightResponse:
+    db_flight = get_flight_by_id(flight_id, db)
+
+    if not db_flight:
+        return None
+
+    for key, value in flight.model_dump(exclude_unset=True).items():
+        setattr(db_flight, key, value)
+
+    db.commit()
+    db.refresh(db_flight)
+    return db_flight
+
+def search_flights(search_params: FlightSearch , db: Session) -> List[FlightResponse]:
+    stmt = select(Flight)
+
+    if search_params.arrival_airport:
+        stmt = stmt.where(Flight.arrival_airport == search_params.arrival_airport)
+
+    if search_params.departure_airport:
+        stmt = stmt.where(Flight.departure_airport == search_params.departure_airport)
+
+    if search_params.start_time:
+        stmt = stmt.where(Flight.start_time >= search_params.start_time)
+
+    if search_params.end_time:
+        stmt = stmt.where(Flight.end_time <= search_params.end_time)
+
+    if search_params.min_price is not None:
+        stmt = stmt.where(Flight.price >= search_params.min_price)
+
+    if search_params.max_price is not None:
+        stmt = stmt.where(Flight.price <= search_params.max_price)
+
+    if search_params.flight_class:
+        stmt = stmt.where(Flight.flight_class == search_params.flight_class)
+
+    return list(db.execute(stmt).scalars().all())
