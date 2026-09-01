@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from typing import List
 
 from .models import Flight
 from .schemas import FlightCreate, FlightResponse, FlightUpdate, FlightSearch
@@ -12,7 +11,7 @@ def create_flight(db: Session, flight: FlightCreate) -> FlightResponse:
     db.refresh(new_flight)
     return new_flight
 
-def get_flights(db: Session) -> List[FlightResponse]:
+def get_flights(db: Session) -> list[FlightResponse]:
     stmt = select(Flight)
     return list(db.execute(stmt).scalars().all())
 
@@ -32,7 +31,7 @@ def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> FlightR
     db.refresh(db_flight)
     return db_flight
 
-def search_flights(search_params: FlightSearch , db: Session) -> List[FlightResponse]:
+def search_flights(search_params: FlightSearch , db: Session) -> list[FlightResponse]:
     stmt = select(Flight)
 
     if search_params.arrival_airport:
