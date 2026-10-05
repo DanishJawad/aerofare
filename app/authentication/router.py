@@ -5,8 +5,8 @@ from fastapi.security import OAuth2PasswordRequestForm
 from ..database import DbSession
 from .schemas import UserResponse, UserCreate, Token, UserUpdate, PasswordChange
 from . import services
-from .security import create_access_token
-from .dependencies import CurrentUser, AdminUser
+from .security import create_access_token, revoke_token
+from .dependencies import CurrentUser, AdminUser, CurrentTokenPayload
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -56,6 +56,10 @@ def login_user(form: Annotated[OAuth2PasswordRequestForm,  Depends()] ,db: DbSes
 
     return Token(access_token=create_access_token(str(user.id)),
                  token_type="bearer")
+
+@router.post("/logout", status_code=204)
+def logout_user(token_payload: CurrentTokenPayload):
+    revoke_token(token_payload.jti, token_payload.expires_at)
 
 
 

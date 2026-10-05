@@ -1,4 +1,5 @@
-from typing import Annotated, Generator
+from collections.abc import Generator
+from typing import Annotated
 
 from fastapi import Depends
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,7 @@ class Settings(BaseSettings):
     algorithm: str
     secret_key: str
     access_token_expiry_minutes: int
+    redis_url: str
 
 settings = Settings()
 
@@ -22,11 +24,8 @@ SessionLocal = sessionmaker(bind=engine)
 class Base(DeclarativeBase):
     pass
 
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
+def get_db() -> Generator[Session]:
+    with SessionLocal() as db:
         yield db
-    finally:
-        db.close()
 
 DbSession = Annotated[Session, Depends(get_db)]

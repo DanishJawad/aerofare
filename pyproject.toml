@@ -1,5 +1,5 @@
 [project]
-name = "bookme-replica"
+name = "aerofare"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -13,9 +13,16 @@ dependencies = [
     "pyjwt>=2.13.0",
     "pymysql>=1.2.0",
     "python-multipart>=0.0.32",
+    "redis>=8.1.0",
     "sqlalchemy>=2.0.52",
     "uvicorn>=0.52.4",
 ]
 [tool.fastapi]
 entrypoint = "app.main:app"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
 
