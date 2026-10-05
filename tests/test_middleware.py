@@ -3,6 +3,7 @@ import logging
 import re
 
 from app.commons.log_config import JsonFormatter, RequestIdFilter, request_id_var
+from app.commons.middleware import _VALID_REQUEST_ID
 
 
 def test_every_response_gets_a_generated_request_id(client):
@@ -25,6 +26,15 @@ def test_an_unsafe_incoming_request_id_is_replaced(client):
         r = client.get("/airports", headers={"X-Request-ID": bad})
         assert r.headers["X-Request-ID"] != bad
         assert re.fullmatch(r"[0-9a-f]{32}", r.headers["X-Request-ID"])
+
+
+def test_request_id_pattern_rejects_a_trailing_newline():
+    """HTTP clients refuse to send a newline in a header, so this can't be
+    tested through the client. Test the pattern itself: "$" in a regex
+    matches before a trailing newline, which fullmatch does not allow."""
+    assert _VALID_REQUEST_ID.fullmatch("abc-123")
+    assert _VALID_REQUEST_ID.fullmatch("abc\n") is None
+    assert _VALID_REQUEST_ID.fullmatch("") is None
 
 
 def test_each_request_is_logged_once_with_status_and_duration(client, caplog):

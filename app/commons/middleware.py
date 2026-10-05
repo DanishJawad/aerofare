@@ -16,14 +16,16 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # one request can be traced across systems. It ends up in our logs, so only
 # accept a short, plain value: anything else could be used to forge fake log
 # lines (for example an id containing a newline).
-_VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+# Checked with fullmatch, not match + "^...$": in Python, "$" also matches
+# just before a trailing "\n", so "abc\n" would pass a "^...$" pattern.
+_VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 
 
 async def request_context(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
     incoming = request.headers.get(REQUEST_ID_HEADER, "")
-    request_id = incoming if _VALID_REQUEST_ID.match(incoming) else uuid4().hex
+    request_id = incoming if _VALID_REQUEST_ID.fullmatch(incoming) else uuid4().hex
     # Not reset afterwards on purpose: each request runs in its own asyncio
     # task with its own copy of the context, so the value can't leak into
     # another request, and leaving it set lets the error handlers that run
