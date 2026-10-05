@@ -11,8 +11,10 @@ config = context.config
 
 from app.database import Base, settings
 from app.airports import models as _airport_models      
-from app.flights import models as _flight_models         
-from app.authentication import models as _auth_models    
+from app.flights import models as _flight_models     
+from app.bookings import models as _booking_models
+from app.payments import models as _payment_models
+from app.authentication import models as _auth_models
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
