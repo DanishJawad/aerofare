@@ -93,7 +93,13 @@ def get_all_bookings(db: Session) -> list[Booking]:
 
 
 def cancel_booking(db: Session, is_admin: bool, user_id: int, booking_id: int) -> Booking:
-    booking = db.get(Booking, booking_id)
+    # Lock the booking before checking its status. Without the lock, two
+    # concurrent cancels both read CONFIRMED and both give the seats back.
+    #
+    # Lock order is booking -> payment -> flight here and in refund_payment.
+    # If the two paths took locks in different orders, a cancel and a refund
+    # of the same booking could each hold what the other needs: a deadlock.
+    booking = db.get(Booking, booking_id, with_for_update=True)
 
     if booking is None:
         raise BookingNotFound()
@@ -104,16 +110,16 @@ def cancel_booking(db: Session, is_admin: bool, user_id: int, booking_id: int) -
     if booking.status != BookingStatus.CONFIRMED:
         raise BookingNotCancellable()
 
+    payment = db.execute(
+        select(Payment).where(Payment.booking_id == booking.id).with_for_update()
+    ).scalar_one_or_none()
+
     flight = db.execute(
         select(Flight).where(Flight.id == booking.flight_id).with_for_update()
     ).scalar_one()
 
     booking.status = BookingStatus.CANCELLED
     flight.available_seats += booking.seats_booked
-
-    payment = db.execute(
-        select(Payment).where(Payment.booking_id == booking.id)
-    ).scalar_one_or_none()
 
     if payment is not None and payment.status == PaymentStatus.COMPLETED:
         payment.status = PaymentStatus.REFUNDED

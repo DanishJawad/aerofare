@@ -40,13 +40,19 @@ def get_all_payments(db: Session) -> list[Payment]:
 
 
 def refund_payment(db: Session, payment_id: int) -> Payment:
-    payment = db.get(Payment, payment_id)
-    if payment is None:
+    # Same lock order as cancel_booking (booking -> payment -> flight), so a
+    # concurrent cancel and refund queue up instead of deadlocking. We only
+    # know the booking id through the payment, so read it first without a
+    # lock: booking_id never changes, so an unlocked read of it is safe.
+    booking_id = db.scalar(select(Payment.booking_id).where(Payment.id == payment_id))
+    if booking_id is None:
         raise PaymentNotFound()
+
+    booking = db.get(Booking, booking_id, with_for_update=True)
+    payment = db.get(Payment, payment_id, with_for_update=True)
+
     if payment.status != PaymentStatus.COMPLETED:
         raise PaymentNotRefundable()
-
-    booking = db.get(Booking, payment.booking_id)
 
     flight = db.execute(
         select(Flight).where(Flight.id == booking.flight_id).with_for_update()

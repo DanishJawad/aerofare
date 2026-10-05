@@ -1,10 +1,15 @@
 import threading
+import time
 from decimal import Decimal
+
+from sqlalchemy import select, text
 
 from app.bookings import services as booking_services
 from app.bookings.schemas import BookingCreate
+from app.flights.models import Flight
+from app.payments import services as payment_services
 
-from .conftest import TestingSessionLocal
+from .conftest import TestingSessionLocal, engine
 
 
 def _make_flight(
@@ -86,6 +91,110 @@ def test_concurrent_bookings_cannot_oversell_the_last_seat(client, admin_headers
 
     flight = client.get(f"/flights/{flight_id}").json()
     assert flight["available_seats"] == 0
+
+
+def _wait_for_lock_waits(expected: int, timeout: float = 5.0) -> None:
+    """Block until `expected` transactions are stuck waiting on a row lock."""
+    deadline = time.monotonic() + timeout
+    with engine.connect() as conn:
+        while time.monotonic() < deadline:
+            # data_lock_waits has one row per blocked lock request. INNODB_TRX
+            # looked like the obvious choice but it's served from a cache and
+            # missed waits that were really happening.
+            waiting = conn.execute(
+                text(
+                    "SELECT COUNT(DISTINCT REQUESTING_ENGINE_TRANSACTION_ID) "
+                    "FROM performance_schema.data_lock_waits"
+                )
+            ).scalar_one()
+            if waiting >= expected:
+                return
+            time.sleep(0.05)
+        state = conn.execute(
+            text("SELECT id, state, info FROM information_schema.PROCESSLIST WHERE db = DATABASE()")
+        ).all()
+    raise AssertionError(f"expected {expected} lock waits, timed out. Connections: {state}")
+
+
+def _race_while_flight_is_locked(flight_id: int, *operations) -> list[str]:
+    """Run each operation in its own thread and session while the test holds
+    the flight row lock, so every operation is forced to get past its status
+    check before any of them can finish. Without this, two threads almost
+    never interleave badly and a race test passes by luck.
+
+    Returns "ok" or the exception class name for each operation."""
+    results: list[str] = []
+    results_lock = threading.Lock()
+
+    def run(operation) -> None:
+        db = TestingSessionLocal()
+        try:
+            operation(db)
+            outcome = "ok"
+        except Exception as exc:  # noqa: BLE001 - we want to see whatever it raises
+            outcome = type(exc).__name__
+        finally:
+            db.close()
+        with results_lock:
+            results.append(outcome)
+
+    holder = TestingSessionLocal()
+    holder.execute(select(Flight).where(Flight.id == flight_id).with_for_update())
+
+    threads = [threading.Thread(target=run, args=(op,)) for op in operations]
+    try:
+        for t in threads:
+            t.start()
+        _wait_for_lock_waits(expected=len(operations))
+    finally:
+        # Always release, or a failed wait leaves the lock held and the next
+        # test's DROP TABLE hangs on it.
+        holder.commit()
+        holder.close()
+        for t in threads:
+            t.join()
+    return results
+
+
+def test_concurrent_cancels_restore_seats_once(client, auth_headers, admin_headers):
+    """Two cancels of the same booking at the same moment. Only one may
+    succeed; seats must be credited back exactly once."""
+    flight_id = _make_flight(client, admin_headers, seats=10)
+    booking = client.post(
+        "/bookings", json={"flight_id": flight_id, "seats_booked": 3}, headers=auth_headers
+    ).json()
+    user_id = booking["user_id"]
+
+    def cancel(db):
+        booking_services.cancel_booking(db, False, user_id, booking["id"])
+
+    results = _race_while_flight_is_locked(flight_id, cancel, cancel)
+
+    assert sorted(results) == ["BookingNotCancellable", "ok"], results
+    assert client.get(f"/flights/{flight_id}").json()["available_seats"] == 10
+
+
+def test_concurrent_cancel_and_refund_restore_seats_once(client, auth_headers, admin_headers):
+    """A user cancels while an admin refunds the same booking. Both paths
+    give seats back, so without consistent locking the seats come back twice.
+    The two paths must also lock rows in the same order or MySQL deadlocks."""
+    flight_id = _make_flight(client, admin_headers, seats=10)
+    booking = client.post(
+        "/bookings", json={"flight_id": flight_id, "seats_booked": 3}, headers=auth_headers
+    ).json()
+    payment = client.get("/payments/me", headers=auth_headers).json()[0]
+
+    def cancel(db):
+        booking_services.cancel_booking(db, False, booking["user_id"], booking["id"])
+
+    def refund(db):
+        payment_services.refund_payment(db, payment["id"])
+
+    results = _race_while_flight_is_locked(flight_id, cancel, refund)
+
+    assert "ok" in results, results
+    assert "OperationalError" not in results, f"deadlock: {results}"
+    assert client.get(f"/flights/{flight_id}").json()["available_seats"] == 10
 
 
 # -------------------------------------------------------------- create
