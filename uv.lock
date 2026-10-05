@@ -16,6 +16,7 @@ dependencies = [
     { name = "pymysql" },
     { name = "python-multipart" },
     { name = "redis" },
+    { name = "rich" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
@@ -37,6 +38,7 @@ requires-dist = [
     { name = "pymysql", specifier = ">=1.2.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "redis", specifier = ">=8.1.0" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.52" },
     { name = "uvicorn", specifier = ">=0.52.4" },
 ]

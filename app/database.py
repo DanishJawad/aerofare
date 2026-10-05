@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     secret_key: str
     access_token_expiry_minutes: int
     redis_url: str
+    log_level: str = "INFO"
+    log_format: Literal["pretty", "json"] = "pretty"
 
 settings = Settings()
 
