@@ -1,24 +1,25 @@
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from .models import Flight
-from .schemas import FlightCreate, FlightResponse, FlightUpdate, FlightSearch
+from .schemas import FlightCreate, FlightSearch, FlightUpdate
 
-def create_flight(db: Session, flight: FlightCreate) -> FlightResponse:
+
+def create_flight(db: Session, flight: FlightCreate) -> Flight:
     new_flight = Flight(**flight.model_dump())
     db.add(new_flight)
     db.commit()
     db.refresh(new_flight)
     return new_flight
 
-def get_flights(db: Session) -> list[FlightResponse]:
+def get_flights(db: Session) -> list[Flight]:
     stmt = select(Flight)
     return list(db.execute(stmt).scalars().all())
 
-def get_flight_by_id(flight_id: int, db: Session) -> FlightResponse:
+def get_flight_by_id(flight_id: int, db: Session) -> Flight | None:
     return db.get(Flight, flight_id)
 
-def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> FlightResponse:
+def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> Flight | None:
     db_flight = get_flight_by_id(flight_id, db)
 
     if not db_flight:
@@ -31,7 +32,7 @@ def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> FlightR
     db.refresh(db_flight)
     return db_flight
 
-def search_flights(search_params: FlightSearch , db: Session) -> list[FlightResponse]:
+def search_flights(search_params: FlightSearch , db: Session) -> list[Flight]:
     stmt = select(Flight)
 
     if search_params.arrival_airport:

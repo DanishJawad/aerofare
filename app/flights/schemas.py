@@ -1,11 +1,23 @@
 from typing import Self
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from .enums import FlightClass
+
+
+def _to_utc(value: datetime) -> datetime:
+    # The client may send an aware datetime with any offset (e.g. "+05:00").
+    # PyMySQL writes a datetime's wall-clock digits as-is and ignores tzinfo,
+    # so an un-normalised offset gets stored as if it were UTC - silently
+    # wrong by however many hours the offset was. Converting here means
+    # whatever offset comes in, what lands in the DB is the correct UTC
+    # instant. A naive value (no offset) is left alone; it's already treated
+    # as UTC by convention.
+    return value.astimezone(timezone.utc) if value.tzinfo is not None else value
+
 
 class FlightCreate(BaseModel):
     airline_name: str
@@ -14,9 +26,14 @@ class FlightCreate(BaseModel):
     start_time: datetime
     end_time: datetime
     price: Decimal = Field(max_digits=10 , decimal_places=2, ge=0)
-    total_seats: int
-    available_seats: int
+    total_seats: int = Field(gt=0)
+    available_seats: int = Field(ge=0)
     flight_class: FlightClass
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalise_timezone(cls, v: datetime) -> datetime:
+        return _to_utc(v)
 
     @model_validator(mode="after")
     def check_consistency(self) -> Self:
@@ -30,7 +47,7 @@ class FlightCreate(BaseModel):
 
 class FlightResponse(FlightCreate):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
 
 class FlightUpdate(BaseModel):
@@ -40,9 +57,30 @@ class FlightUpdate(BaseModel):
     start_time: datetime | None = None
     end_time: datetime | None = None
     price: Decimal | None =  Field(default=None,max_digits=10 , decimal_places=2, ge=0)
-    total_seats: int | None = None
-    available_seats: int | None = None
+    total_seats: int | None = Field(default=None, gt=0)
+    available_seats: int | None = Field(default=None, ge=0)
     flight_class: FlightClass | None = None
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalise_timezone(cls, v: datetime | None) -> datetime | None:
+        return _to_utc(v) if v is not None else None
+
+    @model_validator(mode="after")
+    def check_consistency(self) -> Self:
+        # A PATCH only has to be internally consistent for the fields it
+        # actually sends - checking against the row already in the DB is the
+        # service layer's job, not the schema's.
+        if self.start_time is not None and self.end_time is not None:
+            if self.end_time <= self.start_time:
+                raise ValueError("end_time must be after start_time")
+        if self.total_seats is not None and self.available_seats is not None:
+            if self.available_seats > self.total_seats:
+                raise ValueError("available_seats cannot exceed total_seats")
+        if self.departure_airport is not None and self.arrival_airport is not None:
+            if self.departure_airport == self.arrival_airport:
+                raise ValueError("departure and arrival airports must differ")
+        return self
 
 class FlightSearch(BaseModel):
     departure_airport: int | None = None

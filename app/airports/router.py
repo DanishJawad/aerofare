@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from . import services
 from .schemas import AirportUpdate, AirportCreate, AirportResponse
+from ..authentication.dependencies import AdminUser
 from ..database import DbSession
 
 router = APIRouter(prefix="/airports", tags=["airports"])
@@ -22,11 +23,11 @@ def get_airport_by_id(airport_id : int, db: DbSession):
     return db_airport
 
 @router.post("", response_model=AirportResponse, status_code=201)
-def create_airport(new_airport: AirportCreate, db: DbSession):
+def create_airport(new_airport: AirportCreate, admin: AdminUser, db: DbSession):
     return services.create_airport(db, new_airport)
 
 @router.patch("/{airport_id}", response_model= AirportResponse)
-def update_airport(airport_id: int , updated_airport: AirportUpdate, db: DbSession):
+def update_airport(airport_id: int , updated_airport: AirportUpdate, admin: AdminUser, db: DbSession):
     updated = services.update_airport(airport_id= airport_id, db= db, updated_airport= updated_airport)
 
     if not updated:
