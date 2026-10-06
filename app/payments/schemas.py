@@ -7,7 +7,22 @@ from .enums import PaymentStatus
 
 
 class PaymentResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    # Explicit example: see BookingResponse for why.
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": 1,
+                    "booking_id": 1,
+                    "amount": "300.00",
+                    "status": "completed",
+                    "paid_at": "2030-01-01T06:00:00Z",
+                    "created_at": "2030-01-01T06:00:00Z",
+                }
+            ]
+        },
+    )
 
     id: int
     booking_id: int

@@ -19,7 +19,22 @@ def _to_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc) if value.tzinfo is not None else value
 
 
+_FLIGHT_EXAMPLE = {
+    "airline_name": "PIA",
+    "departure_airport": 1,
+    "arrival_airport": 2,
+    "start_time": "2030-01-01T08:00:00Z",
+    "end_time": "2030-01-01T10:00:00Z",
+    "price": "150.00",
+    "total_seats": 180,
+    "available_seats": 180,
+    "flight_class": "economy",
+}
+
+
 class FlightCreate(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [_FLIGHT_EXAMPLE]})
+
     airline_name: str
     departure_airport: int
     arrival_airport: int
@@ -46,7 +61,10 @@ class FlightCreate(BaseModel):
         return self
 
 class FlightResponse(FlightCreate):
-    model_config = ConfigDict(from_attributes=True)
+    # Re-declared because the example inherited from FlightCreate has no id.
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_extra={"examples": [{"id": 1, **_FLIGHT_EXAMPLE}]}
+    )
 
     id: int
 

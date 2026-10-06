@@ -1,6 +1,7 @@
 import logging
 import re
 from http import HTTPStatus
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -52,6 +53,22 @@ class ApiError(HTTPException):
     ) -> None:
         super().__init__(status_code=status_code, detail=message, headers=headers)
         self.code = code
+
+
+def error_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
+    """For a route's `responses=`: documents these error statuses in /docs as
+    returning our ErrorResponse envelope. Without it, /docs only lists the
+    success response, and FastAPI's built-in 422 describes a shape this API
+    no longer returns."""
+    return {
+        status: {"model": ErrorResponse, "description": HTTPStatus(status).phrase}
+        for status in statuses
+    }
+
+
+# 422 and 500 can happen on any route, so they are declared once on the app
+# instead of on every route.
+COMMON_ERROR_RESPONSES = error_responses(422, 500)
 
 
 # ------------------------------------------------------------------ building responses

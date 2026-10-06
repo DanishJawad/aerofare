@@ -9,6 +9,21 @@ class UserBase(BaseModel):
     country: str
 
 class UserCreate(UserBase):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Ayesha Khan",
+                    "email": "ayesha@example.com",
+                    "phone_number": "+92 300 1234567",
+                    "city": "Lahore",
+                    "country": "PK",
+                    "password": "a-long-passphrase",
+                }
+            ]
+        }
+    )
+
     password: str = Field(min_length=8 , max_length=72)
 
 class UserResponse(UserBase):

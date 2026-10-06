@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.authentication.dependencies import AdminUser, CurrentUser
-from app.commons.errors import ApiError
+from app.commons.errors import ApiError, error_responses
 from app.database import DbSession
 
 from . import services
@@ -12,18 +12,21 @@ router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 # "/me" must be declared before "/{booking_id}", or GET /bookings/me would match
 # "/{booking_id}" with booking_id="me" and fail int conversion.
-@router.get("/me", response_model=list[BookingResponse])
+@router.get("/me", response_model=list[BookingResponse], responses=error_responses(401, 503))
 def read_my_bookings(current_user: CurrentUser, db: DbSession):
+    """The logged-in user's bookings."""
     return services.get_user_bookings(db, current_user.id)
 
 
-@router.get("", response_model=list[BookingResponse])
+@router.get("", response_model=list[BookingResponse], responses=error_responses(401, 403, 503))
 def read_all_bookings(admin: AdminUser, db: DbSession):
+    """List every booking. Admin only."""
     return services.get_all_bookings(db)
 
 
-@router.get("/{booking_id}", response_model=BookingResponse)
+@router.get("/{booking_id}", response_model=BookingResponse, responses=error_responses(401, 403, 404, 503))
 def read_booking(booking_id: int, current_user: CurrentUser, db: DbSession):
+    """Get one booking. Only its owner or an admin can read it."""
     booking = services.get_booking(db, booking_id)
     if booking is None:
         raise ApiError(404, "booking_not_found", "Booking not found")
@@ -32,8 +35,9 @@ def read_booking(booking_id: int, current_user: CurrentUser, db: DbSession):
     return booking
 
 
-@router.post("", response_model=BookingResponse, status_code=201)
+@router.post("", response_model=BookingResponse, status_code=201, responses=error_responses(401, 404, 409, 503))
 def create_booking(new_booking: BookingCreate, current_user: CurrentUser, db: DbSession):
+    """Book seats on a flight. Seats are reserved and a payment is recorded in one transaction. Conflicts: `not_enough_seats`, `flight_departed`."""
     try:
         return services.create_booking(db, current_user.id, new_booking)
     except services.FlightNotFound:
@@ -44,8 +48,9 @@ def create_booking(new_booking: BookingCreate, current_user: CurrentUser, db: Db
         raise ApiError(409, "not_enough_seats", "Not enough seats available")
 
 
-@router.post("/{booking_id}/cancel", response_model=BookingResponse)
+@router.post("/{booking_id}/cancel", response_model=BookingResponse, responses=error_responses(401, 403, 404, 409, 503))
 def cancel_booking(booking_id: int, current_user: CurrentUser, db: DbSession):
+    """Cancel a booking: seats go back to the flight and a completed payment is refunded. `booking_not_cancellable` if it is already cancelled."""
     try:
         return services.cancel_booking(db, current_user.is_admin, current_user.id, booking_id)
     except services.BookingNotFound:
