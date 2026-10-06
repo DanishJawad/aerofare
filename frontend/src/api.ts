@@ -12,7 +12,7 @@ import type {
   TokenResponse,
   User,
   UserUpdate,
-  ValidationIssue,
+  ErrorEnvelope,
 } from "./types"
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -50,12 +50,24 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 export class ApiError extends Error {
   readonly status: number
   readonly fieldErrors: Record<string, string>
+  /** Machine-readable, e.g. "not_enough_seats". Empty if the server sent no envelope. */
+  readonly code: string
+  /** Quote this when reporting a problem: it finds the request in the server logs. */
+  readonly requestId: string | null
 
-  constructor(status: number, message: string, fieldErrors: Record<string, string> = {}) {
+  constructor(
+    status: number,
+    message: string,
+    fieldErrors: Record<string, string> = {},
+    code = "",
+    requestId: string | null = null,
+  ) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.fieldErrors = fieldErrors
+    this.code = code
+    this.requestId = requestId
   }
 }
 
@@ -73,39 +85,36 @@ function fallbackMessage(status: number): string {
 }
 
 async function toApiError(res: Response): Promise<ApiError> {
-  let body: unknown = null
+  let body: Partial<ErrorEnvelope> | null = null
   try {
     body = await res.json()
   } catch {
-    // Non-JSON error body, fall through to a generic message.
+    // Non-JSON body (a proxy error page, say): fall through to a generic message.
   }
 
-  const detail = (body as { detail?: unknown } | null)?.detail
+  const error = body?.error
+  if (!error) return new ApiError(res.status, fallbackMessage(res.status))
 
-  if (typeof detail === "string") {
-    return new ApiError(res.status, cleanMessage(detail))
+  const fieldErrors: Record<string, string> = {}
+  const general: string[] = []
+  for (const detail of error.details ?? []) {
+    const message = cleanMessage(detail.message)
+    if (detail.field && !fieldErrors[detail.field]) fieldErrors[detail.field] = message
+    else if (!detail.field) general.push(message)
   }
 
-  if (Array.isArray(detail)) {
-    const fieldErrors: Record<string, string> = {}
-    const general: string[] = []
-    for (const issue of detail as ValidationIssue[]) {
-      // loc looks like ["body", "price"] for a field, or ["body"] for a
-      // cross-field model_validator error.
-      const field = issue.loc.length > 1 ? String(issue.loc[issue.loc.length - 1]) : null
-      const msg = cleanMessage(issue.msg)
-      if (field && !fieldErrors[field]) fieldErrors[field] = msg
-      else if (!field) general.push(msg)
-    }
-    const message =
+  let message: string
+  if (error.code === "validation_error") {
+    message =
       general[0] ??
       (Object.keys(fieldErrors).length > 0
         ? "Some fields need attention."
         : fallbackMessage(res.status))
-    return new ApiError(res.status, message, fieldErrors)
+  } else {
+    // For everything else the server's message is already written for people.
+    message = cleanMessage(error.message)
   }
-
-  return new ApiError(res.status, fallbackMessage(res.status))
+  return new ApiError(res.status, message, fieldErrors, error.code, error.request_id)
 }
 
 // ---------------------------------------------------------------- core request

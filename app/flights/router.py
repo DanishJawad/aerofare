@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query
 
 from ..authentication.dependencies import AdminUser
+from ..commons.errors import ApiError
 from ..database import DbSession
 from . import services
 from .schemas import FlightCreate, FlightResponse, FlightSearch, FlightUpdate
@@ -24,7 +25,7 @@ def search_flights(filters: Annotated[FlightSearch, Query()], db: DbSession):
 def get_flight_by_id(flight_id: int, db: DbSession):
     flight = services.get_flight_by_id(flight_id, db)
     if not flight:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flight not found")
+        raise ApiError(404, "flight_not_found", "Flight not found")
     return flight
 
 
@@ -37,5 +38,5 @@ def create_flight(new_flight: FlightCreate, admin: AdminUser, db: DbSession):
 def update_flight(flight_id: int, updated_flight: FlightUpdate, admin: AdminUser, db: DbSession):
     flight = services.update_flight(flight_id, db, updated_flight)
     if not flight:
-         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flight not found")
+        raise ApiError(404, "flight_not_found", "Flight not found")
     return flight

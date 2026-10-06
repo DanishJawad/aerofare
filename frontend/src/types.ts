@@ -97,9 +97,18 @@ export interface Payment {
   created_at: string
 }
 
-/** One entry of FastAPI's 422 `detail` array. */
-export interface ValidationIssue {
-  loc: (string | number)[]
-  msg: string
-  type: string
+/** One entry of an error's `details` list. `field` is null for whole-body rules. */
+export interface ErrorDetail {
+  field: string | null
+  message: string
+}
+
+/** Every error response from the API has this shape. */
+export interface ErrorEnvelope {
+  error: {
+    code: string
+    message: string
+    details: ErrorDetail[] | null
+    request_id: string
+  }
 }

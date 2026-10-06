@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.authentication.dependencies import AdminUser, CurrentUser
+from app.commons.errors import ApiError
 from app.database import DbSession
 
 from . import services
@@ -20,11 +21,11 @@ def read_all_payments(admin: AdminUser, db: DbSession):
 def read_payment(payment_id: int, current_user: CurrentUser, db: DbSession):
     payment = services.get_payment(db, payment_id)
     if payment is None:
-        raise HTTPException(status_code=404, detail="Payment not found")
+        raise ApiError(404, "payment_not_found", "Payment not found")
     if not current_user.is_admin and not services.payment_belongs_to_user(
         db, payment, current_user.id
     ):
-        raise HTTPException(status_code=403, detail="Not your payment")
+        raise ApiError(403, "not_payment_owner", "Not your payment")
     return payment
 
 @router.post("/{payment_id}/refund", response_model=PaymentResponse)
@@ -32,6 +33,6 @@ def refund_payment(payment_id: int, admin: AdminUser, db: DbSession):
     try:
         return services.refund_payment(db, payment_id)
     except services.PaymentNotFound:
-        raise HTTPException(status_code=404, detail="Payment not found")
+        raise ApiError(404, "payment_not_found", "Payment not found")
     except services.PaymentNotRefundable:
-        raise HTTPException(status_code=409, detail="Payment cannot be refunded")
+        raise ApiError(409, "payment_not_refundable", "Payment cannot be refunded")

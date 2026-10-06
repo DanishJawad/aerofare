@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from . import services
 from .schemas import AirportUpdate, AirportCreate, AirportResponse
 from ..authentication.dependencies import AdminUser
+from ..commons.errors import ApiError
 from ..database import DbSession
 
 router = APIRouter(prefix="/airports", tags=["airports"])
@@ -18,7 +19,7 @@ def get_airport_by_id(airport_id : int, db: DbSession):
     db_airport = services.get_airport_by_id(db , airport_id)
 
     if not db_airport:
-            raise HTTPException(status_code=404 , detail="Airport not found")
+            raise ApiError(404, "airport_not_found", "Airport not found")
     
     return db_airport
 
@@ -31,6 +32,6 @@ def update_airport(airport_id: int , updated_airport: AirportUpdate, admin: Admi
     updated = services.update_airport(airport_id= airport_id, db= db, updated_airport= updated_airport)
 
     if not updated:
-        raise HTTPException(status_code=404 , detail="Airport not found")
+        raise ApiError(404, "airport_not_found", "Airport not found")
 
     return updated

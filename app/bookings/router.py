@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.authentication.dependencies import AdminUser, CurrentUser
+from app.commons.errors import ApiError
 from app.database import DbSession
 
 from . import services
@@ -25,9 +26,9 @@ def read_all_bookings(admin: AdminUser, db: DbSession):
 def read_booking(booking_id: int, current_user: CurrentUser, db: DbSession):
     booking = services.get_booking(db, booking_id)
     if booking is None:
-        raise HTTPException(status_code=404, detail="Booking not found")
+        raise ApiError(404, "booking_not_found", "Booking not found")
     if booking.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Not your booking")
+        raise ApiError(403, "not_booking_owner", "Not your booking")
     return booking
 
 
@@ -36,11 +37,11 @@ def create_booking(new_booking: BookingCreate, current_user: CurrentUser, db: Db
     try:
         return services.create_booking(db, current_user.id, new_booking)
     except services.FlightNotFound:
-        raise HTTPException(status_code=404, detail="Flight not found")
+        raise ApiError(404, "flight_not_found", "Flight not found")
     except services.FlightDeparted:
-        raise HTTPException(status_code=409, detail="Flight has already departed")
+        raise ApiError(409, "flight_departed", "Flight has already departed")
     except services.NotEnoughSeats:
-        raise HTTPException(status_code=409, detail="Not enough seats available")
+        raise ApiError(409, "not_enough_seats", "Not enough seats available")
 
 
 @router.post("/{booking_id}/cancel", response_model=BookingResponse)
@@ -48,8 +49,8 @@ def cancel_booking(booking_id: int, current_user: CurrentUser, db: DbSession):
     try:
         return services.cancel_booking(db, current_user.is_admin, current_user.id, booking_id)
     except services.BookingNotFound:
-        raise HTTPException(status_code=404, detail="Booking not found")
+        raise ApiError(404, "booking_not_found", "Booking not found")
     except services.NotBookingOwner:
-        raise HTTPException(status_code=403, detail="Not your booking")
+        raise ApiError(403, "not_booking_owner", "Not your booking")
     except services.BookingNotCancellable:
-        raise HTTPException(status_code=409, detail="Booking cannot be cancelled")
+        raise ApiError(409, "booking_not_cancellable", "Booking cannot be cancelled")

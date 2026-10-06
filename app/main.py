@@ -5,6 +5,7 @@ from .airports.router import router as airport_router
 from .authentication.router import router as auth_router
 from .bookings import models as _booking_models  # noqa: F401 - registers the table
 from .bookings.router import router as booking_router
+from .commons.errors import register_error_handlers
 from .commons.log_config import configure_logging
 from .commons.middleware import request_context
 from .database import settings
@@ -17,6 +18,7 @@ configure_logging(settings.log_level, settings.log_format)
 app = FastAPI(title="Aerofare")
 
 app.middleware("http")(request_context)
+register_error_handlers(app)
 
 app.add_middleware(
     CORSMiddleware,
