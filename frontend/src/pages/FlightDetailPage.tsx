@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useRef, useState, type FormEvent } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { ApiError, api } from "../api"
 import { useAuth } from "../auth/context"
@@ -62,6 +62,11 @@ function BookingPanel({ flight, onConflict }: { flight: Flight; onConflict: () =
   const [seats, setSeats] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The idempotency key for the booking attempt in progress. It is kept while
+  // the outcome is unknown (no answer, or a server error), so pressing Book
+  // again cannot book twice, and dropped once the server has given a definite
+  // answer. It is tied to the seat count: a key may only repeat the same request.
+  const attempt = useRef<{ key: string; seats: number } | null>(null)
 
   const departed = hasDeparted(flight)
   const soldOut = flight.available_seats <= 0
@@ -75,10 +80,19 @@ function BookingPanel({ flight, onConflict }: { flight: Flight; onConflict: () =
     setSubmitting(true)
     setError(null)
     try {
-      const booking = await api.createBooking({ flight_id: flight.id, seats_booked: seats })
+      if (attempt.current?.seats !== seats) attempt.current = { key: crypto.randomUUID(), seats }
+      const booking = await api.createBooking(
+        { flight_id: flight.id, seats_booked: seats },
+        attempt.current.key,
+      )
+      attempt.current = null
       navigate("/bookings", { state: { bookedId: booking.id } })
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null
+      // Status 0 is "could not reach the server", and 5xx may have happened
+      // after the booking was saved. In both cases keep the key for the retry.
+      const outcomeUnknown = apiErr === null || apiErr.status === 0 || apiErr.status >= 500
+      if (!outcomeUnknown) attempt.current = null
       setError(apiErr?.fieldErrors.seats_booked ?? apiErr?.message ?? "Booking failed. Try again.")
       // Seats or departure changed under us: refresh the flight so the panel is honest.
       if (apiErr?.status === 409) onConflict()

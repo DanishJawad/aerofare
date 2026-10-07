@@ -126,12 +126,14 @@ interface RequestOptions {
   json?: unknown
   form?: Record<string, string>
   query?: Record<string, string | number | undefined>
+  /** Extra request headers, e.g. Idempotency-Key. */
+  headers?: Record<string, string>
   /** Set false for calls where 401 means "bad credentials", not "session over". */
   redirectOn401?: boolean
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", json, form, query, redirectOn401 = true } = options
+  const { method = "GET", json, form, query, headers: extraHeaders, redirectOn401 = true } = options
 
   const url = new URL(path, BASE_URL)
   if (query) {
@@ -140,7 +142,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
   }
 
-  const headers: Record<string, string> = { Accept: "application/json" }
+  const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders }
   const token = getToken()
   if (token) headers.Authorization = `Bearer ${token}`
 
@@ -222,7 +224,16 @@ export const api = {
   // bookings
   myBookings: () => apiGet<Booking[]>("/bookings/me"),
   allBookings: () => apiGet<Booking[]>("/bookings"),
-  createBooking: (input: BookingInput) => apiPost<Booking>("/bookings", input),
+  /**
+   * `idempotencyKey` identifies one booking attempt. Sending the same key again
+   * returns the original booking instead of booking twice.
+   */
+  createBooking: (input: BookingInput, idempotencyKey: string) =>
+    request<Booking>("/bookings", {
+      method: "POST",
+      json: input,
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
   cancelBooking: (id: number) => apiPost<Booking>(`/bookings/${id}/cancel`),
 
   // payments
