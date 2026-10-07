@@ -74,6 +74,25 @@ def fresh_redis():
     yield
 
 
+@pytest.fixture(autouse=True)
+def mail_outbox(monkeypatch):
+    """Run Celery tasks inline and catch outgoing email, for every test.
+
+    Without this, a booking test would push a task onto the Redis broker and
+    nothing would run it, and the task would read the dev database instead of
+    the test one. Returns the list of (to, subject, body) that would have been
+    sent."""
+    from app.notifications import tasks
+    from app.worker import celery_app
+
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
+    monkeypatch.setattr(celery_app.conf, "task_eager_propagates", True)
+    monkeypatch.setattr(tasks, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(tasks, "send_email", lambda to, subject, body: sent.append((to, subject, body)))
+    return sent
+
+
 @pytest.fixture
 def client():
     """A TestClient whose get_db points at the test database instead of the

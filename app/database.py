@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     redis_url: str
     log_level: str = "INFO"
     log_format: Literal["pretty", "json"] = "pretty"
+    # Defaults match Mailpit running on this machine (SMTP on 1025).
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    mail_from: str = "Aerofare <noreply@aerofare.local>"
 
 settings = Settings()
 

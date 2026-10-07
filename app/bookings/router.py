@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, Response
 from app.authentication.dependencies import AdminUser, CurrentUser
 from app.commons.errors import ApiError, error_responses
 from app.database import DbSession
+from app.notifications.tasks import enqueue_booking_confirmation
 
 from . import services
 from .schemas import BookingCreate, BookingResponse
@@ -85,6 +86,10 @@ def create_booking(
     if result.replayed:
         response.status_code = 200
         response.headers["Idempotent-Replayed"] = "true"
+    else:
+        # After the commit inside the service, so the worker can see the booking.
+        # Not on a replay: the first request already queued the email.
+        enqueue_booking_confirmation(result.booking.id)
     return result.booking
 
 
