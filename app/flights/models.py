@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import String, DateTime, Enum, ForeignKey, Numeric
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -19,4 +19,11 @@ class Flight(Base):
     price : Mapped[Decimal] = mapped_column(Numeric(10,2))
     total_seats: Mapped[int]
     available_seats: Mapped[int]
-    flight_class: Mapped[FlightClass] = mapped_column(Enum(FlightClass, native_enum=False, length=20))   
+    flight_class: Mapped[FlightClass] = mapped_column(Enum(FlightClass, native_enum=False, length=20))
+
+    # Serves GET /flights/search: two equalities (the route) then a range (the
+    # date), which is the order MySQL can walk an index in. See
+    # docs/query-optimization.md for the measurements behind it.
+    __table_args__ = (
+        Index("ix_flights_route_start_time", "departure_airport", "arrival_airport", "start_time"),
+    )   
