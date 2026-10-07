@@ -43,6 +43,13 @@ services:
 
   redis:
     image: redis:7
+    # Redis holds revoked login tokens, password reset tokens, rate-limit counters
+    # and queued emails. By default it keeps them in memory only, so a restart
+    # would silently un-revoke every logged-out token. appendonly makes it write
+    # each change to /data, and the volume keeps /data across container recreation.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -112,3 +119,4 @@ services:
 
 volumes:
   mysql-data:
+  redis-data:

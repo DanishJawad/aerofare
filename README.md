@@ -1,52 +1,98 @@
 # Aerofare
 
-A flight-booking REST API and web client: search flights, book seats, and manage refunds, with
-the concurrency and auth handling a real booking system needs. Built to learn backend
-engineering properly rather than to ship a demo. The interesting part isn't the CRUD, it's
-making sure two people can't book the same last seat, and that a cancelled booking actually
-reverses everything it touched.
+[![CI](https://github.com/DanishJawad/aerofare/actions/workflows/ci.yml/badge.svg)](https://github.com/DanishJawad/aerofare/actions/workflows/ci.yml)
 
-## The problem
+Aerofare is a flight-booking REST API (FastAPI, MySQL, Redis) with a React client. Users search
+flights, book seats, pay, cancel and get refunds, and admins manage airports and flights. The part
+I cared about is correctness under concurrency: two people booking the last seat, a cancel racing
+a refund, and a client retrying a booking after a dropped response. Tests for those run against
+real MySQL and Redis in CI. One measured result: a composite index cut the rows read per route
+search from 6,776 to 36-66 on 200,000 seeded flights.
 
-Most student booking-app clones stop at "insert a row." That breaks the moment two requests hit
-the same flight at once: both read the same seat count, both succeed, and the flight oversells.
-A booking system that can't guarantee this is broken, whatever else it does.
+## How it handles the hard cases
 
-## Approach
+- **Last seat.** Booking takes a row lock (`SELECT ... FOR UPDATE`) on the flight before checking
+  and decrementing seats, so a concurrent request waits instead of racing. The seat change, the
+  booking and its payment commit as one transaction.
+- **Cancel racing refund.** Both give seats back, so without care the seats come back twice. Both
+  paths lock booking, then payment, then flight, in that order, which also rules out a deadlock.
+  The test holds the flight lock to force both requests past their status checks, so it fails
+  reliably when the fix is removed instead of passing by luck.
+- **Retried bookings.** `POST /bookings` accepts an `Idempotency-Key` header. A unique constraint
+  on `(user_id, key)` lets exactly one request insert; the other gets the original booking back
+  (200, `Idempotent-Replayed: true`). The same key with a different body is a 422. Verified with
+  real parallel requests.
+- **Logout and password changes.** Tokens carry a `jti`, and logout blacklists it in Redis until
+  the token would have expired. A password change or reset bumps a `token_version` on the user,
+  which ends every older login. The role is read from the database, not from the token.
+- **Redis down.** Authenticated requests fail closed with a 503, because without the blacklist a
+  logged-out token could not be rejected.
 
-- **FastAPI + SQLAlchemy 2.0**, layered as router to service to model per feature (airports,
-  flights, auth, bookings, payments), with Pydantic schemas as the request/response boundary.
-- **Booking a flight takes a row lock** (`SELECT ... FOR UPDATE`) on the flight before checking
-  and decrementing seats, so a concurrent request blocks instead of racing. The seat decrement,
-  the booking row, and its payment record commit as one transaction.
-- **JWT auth with server-side revocation.** Tokens carry a `jti`; logging out blacklists it in
-  Redis with a TTL matching the token's remaining lifetime, so a revoked token stops working
-  immediately instead of waiting out its expiry.
-- **Alembic migrations** track every schema change. The schema is never hand-created.
-- **React + TypeScript frontend** consuming the same API a real client would: JWT in
-  `localStorage`, 401 handling, loading/error/empty states on every screen, an admin area gated
-  on a role read from the server, not the token.
+## What else is in it
 
-## What went wrong, and what it taught me
+- **One error shape.** Every error is `{"error": {"code", "message", "details", "request_id"}}`.
+  The request id is also the `X-Request-ID` header and appears on every log line, so a user's
+  report can be found in the logs.
+- **Documented errors.** `/docs` shows the error shape for each route. Tests check that every
+  route documents 422 and 500, that routes needing a login document 401 and 503, that admin
+  routes document 403, and that all of them use the shared shape.
+- **Booking confirmation emails** are sent by a Celery worker over the Redis queue, so a slow or
+  broken mail server cannot slow down or fail a booking. Mailpit catches all mail locally.
+- **Password reset.** `POST /users/forgot-password` always answers 202, so it cannot be used to
+  find registered emails. The reset token is single-use, expires after 15 minutes and is stored
+  in Redis only as a hash. Requests are rate limited per address and per IP.
+- **CI** (GitHub Actions) runs the tests on a real MySQL and Redis, applies the migrations to an
+  empty database, runs `alembic check` so models and migrations cannot drift, and builds the
+  frontend.
 
-The migration chain looked complete. It had only ever run against a database whose tables were
-actually built earlier by SQLAlchemy's `create_all()`, before Alembic was wired in properly, so
-the first migration was silently empty and nobody noticed, because the target database already
-had every table it was supposed to create. It only surfaced when I pointed the app at a
-genuinely empty database: `alembic upgrade head` failed immediately. Fixed it by writing the
-real `CREATE TABLE` statements into that migration and rebuilding the schema from scratch to
-prove it now works end to end. The lesson: a migration chain that has never been run against
-zero isn't verified, it's untested.
+## Measured: flight search
 
-## Run it locally
+`GET /flights/search` on 200,000 seeded flights, median of 3 runs of 50 calls each:
 
-Needs MySQL and Redis running locally.
+| Search | Rows examined, before to after | Median ms, before to after |
+|---|---:|---:|
+| route + one week | 6,776 to 36 | 2.79 to 0.57 |
+| route + one month + class | 6,776 to 40 | 4.38 to 0.51 |
+| route only | 6,776 to 66 | 7.34 to 1.13 |
+| date only, no route (control) | 200,000 to 200,000 | 62.34 to 62.50 |
+
+I expected a table scan as the baseline. MySQL was already intersecting two foreign-key indexes,
+so the gain is 5-9x, not more, and a search with no route is not helped at all. The method, the
+`EXPLAIN ANALYZE` plans, the index's cost and the exact commands to reproduce are in
+[docs/query-optimization.md](docs/query-optimization.md).
+
+## What went wrong
+
+The migration chain looked complete but had only ever run against a database whose tables
+`create_all()` had built earlier, so the first migration was silently empty. It surfaced when I
+ran `alembic upgrade head` on a genuinely empty database. I fixed it and added a CI step that
+does exactly that on every push, plus `alembic check` for model and migration drift. Running
+downgrades by hand later turned up the same kind of gap: two autogenerated downgrades fail on
+MySQL, because it silently drops a foreign key's index when a covering index is added. I fixed
+both by hand. CI does not run downgrades.
+
+## Run it
+
+With Docker only:
+
+```bash
+cp .env.example .env        # set SECRET_KEY, e.g. from: openssl rand -hex 32
+docker compose up --build   # API and docs: http://localhost:8000/docs, mail: http://localhost:8025
+```
+
+This starts MySQL, Redis, a one-off migration job, the API, the Celery worker and Mailpit. MySQL
+and Redis are not published to your machine. Both keep their data in named volumes, which survive
+`docker compose down`; `docker compose down -v` deletes them. Stop any local `fastapi` server
+first, since both want port 8000.
+
+Without Docker (needs MySQL, Redis and, for email, Mailpit on port 1025):
 
 ```bash
 cp .env.example .env        # fill in DATABASE_URL, SECRET_KEY, REDIS_URL
 uv sync
-alembic upgrade head
-fastapi dev app/main.py     # http://localhost:8000/docs
+uv run alembic upgrade head
+uv run fastapi dev app/main.py                  # http://localhost:8000/docs
+uv run celery -A app.worker worker -l INFO      # in a second terminal, for emails
 ```
 
 ```bash
@@ -56,24 +102,32 @@ npm install
 npm run dev                 # http://localhost:5173
 ```
 
-### With Docker
-
-Needs only Docker. One command starts MySQL, Redis, a one-off migration job and the API.
+Tests (they drop and recreate tables, so they refuse to run unless the database name ends in
+`_test` and Redis is not db 0):
 
 ```bash
-cp .env.example .env        # set SECRET_KEY, e.g. from: openssl rand -hex 32
-docker compose up --build   # http://localhost:8000/docs
+TEST_DATABASE_URL=mysql+pymysql://USER:PASSWORD@localhost:3306/aerofare_test uv run pytest
 ```
 
-- Stop any local `fastapi` server first: both want port 8000.
-- MySQL and Redis are not published to your machine, so they cannot clash with ones you already run.
-- Data lives in a named volume and survives `docker compose down`. `docker compose down -v` deletes it.
-- The migration job runs `alembic upgrade head` once and exits, then the API starts.
+To reproduce the search benchmark, see the end of
+[docs/query-optimization.md](docs/query-optimization.md).
 
-## What's next
+## Limits and decisions
 
-- Automated tests around the booking and payment lifecycle, starting with the concurrent-booking
-  case above.
-- Deployment, once I've learned it properly rather than rushing it.
-- Pagination on list endpoints, rate limiting on login, background email notifications on
-  booking confirmation.
+- **Tokens are in `localStorage`**, which is readable by any script on the page. That is the usual
+  tradeoff against cookies, which would need CSRF protection.
+- **Email is plain SMTP with no TLS or login.** It is built for Mailpit. A real provider needs
+  `starttls()` and `login()`.
+- **Rate limits are a fixed window**, so a burst across a window boundary can reach twice the
+  limit. Behind a proxy, the per-IP limit would see the proxy's address.
+- **A reset link stays valid until used or expired**, even if a newer one was requested.
+- **Search has no `LIMIT` or `ORDER BY`**, and a date-only search scans the whole table.
+- **No real users, and not deployed.** The CORS origin is hardcoded to the local frontend.
+
+## What I would do next
+
+- Deploy it: managed MySQL and Redis, a real SMTP provider, CORS and secrets from the environment.
+- Paginate the list endpoints and add a `LIMIT` to search.
+- Add a `start_time` index if date-only searches turn out to be common.
+- Pass the request id into worker logs, so an email can be traced back to its request.
+- Build the Docker image in CI, so a broken Dockerfile fails a push.
