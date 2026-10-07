@@ -18,6 +18,7 @@ class TokenPayload:
     subject: str
     jti: str
     expires_at: datetime
+    version: int  # the user's token_version when this token was issued
 
 
 def hash_password(plain_password: str) -> str:
@@ -26,13 +27,14 @@ def hash_password(plain_password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, version: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": subject,
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expiry_minutes),
         "jti": str(uuid4()),  # unique id for this token; what the blacklist keys on
+        "ver": version,
     }
 
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
@@ -56,6 +58,8 @@ def decode_access_token(token: str) -> TokenPayload:
         jti=payload["jti"],
         # jwt.decode gives exp back as a Unix timestamp (int), not a datetime
         expires_at=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
+        # Tokens issued before this claim existed count as version 0.
+        version=payload.get("ver", 0),
     )
 
 

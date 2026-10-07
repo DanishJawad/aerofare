@@ -1,5 +1,6 @@
 import os
 import re
+from typing import NamedTuple
 from urllib.parse import urlparse
 
 # Must run before any `app` import: the app reads REDIS_URL once, when
@@ -74,22 +75,31 @@ def fresh_redis():
     yield
 
 
+class Mail(NamedTuple):
+    to: str
+    subject: str
+    text: str
+    html: str | None
+
+
 @pytest.fixture(autouse=True)
 def mail_outbox(monkeypatch):
     """Run Celery tasks inline and catch outgoing email, for every test.
 
     Without this, a booking test would push a task onto the Redis broker and
     nothing would run it, and the task would read the dev database instead of
-    the test one. Returns the list of (to, subject, body) that would have been
-    sent."""
+    the test one. Returns the list of Mail(to, subject, text, html) that would
+    have been sent."""
     from app.notifications import tasks
     from app.worker import celery_app
 
-    sent: list[tuple[str, str, str]] = []
+    sent: list[Mail] = []
     monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
     monkeypatch.setattr(celery_app.conf, "task_eager_propagates", True)
     monkeypatch.setattr(tasks, "SessionLocal", TestingSessionLocal)
-    monkeypatch.setattr(tasks, "send_email", lambda to, subject, body: sent.append((to, subject, body)))
+    monkeypatch.setattr(
+        tasks, "send_email", lambda to, subject, text, html=None: sent.append(Mail(to, subject, text, html))
+    )
     return sent
 
 

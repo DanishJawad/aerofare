@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+      <h1 style="margin:0 0 8px;font-size:20px;">Booking confirmed</h1>
+      <p style="margin:0 0 20px;">Hello {{ name }}, your booking #{{ booking_id }} is confirmed.</p>
+      <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;">
+        {% for label, value in details %}
+        <tr>
+          <td style="padding:8px 0;border-top:1px solid #e1e4e8;color:#5a6472;width:35%;">{{ label }}</td>
+          <td style="padding:8px 0;border-top:1px solid #e1e4e8;">{{ value }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+{% endblock %}
+{% block footer %}You are receiving this because a booking was made with this email address.{% endblock %}

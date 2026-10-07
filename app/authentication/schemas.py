@@ -51,3 +51,17 @@ class PasswordChange(BaseModel):
         if self.new_password == self.current_password:
             raise ValueError("new password cannot be same as old password")
         return self
+
+
+class ForgotPassword(BaseModel):
+    email: EmailStr
+
+
+class ResetPassword(BaseModel):
+    # max_length: the token is hashed before lookup, so refuse to hash megabytes.
+    token: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
+class Message(BaseModel):
+    message: str

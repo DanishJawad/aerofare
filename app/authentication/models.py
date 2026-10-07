@@ -14,4 +14,8 @@ class User(Base):
     phone_number: Mapped[str | None] = mapped_column(String(50))
     city: Mapped[str] = mapped_column(String(50))
     country: Mapped[str] = mapped_column(String(50))
+    # Goes up by one whenever the password changes. Every access token carries
+    # the value it was issued under, and a token whose number no longer matches
+    # is rejected: that is how a password change ends all older logins.
+    token_version: Mapped[int] = mapped_column(default=0, server_default="0")
 

@@ -5,6 +5,8 @@ from app.notifications import mailer, tasks
 from app.notifications.tasks import send_booking_confirmation
 from app.worker import celery_app
 
+from .conftest import Mail
+
 
 def _book(client, headers, flight_id, seats=2, key=None):
     extra = {"Idempotency-Key": key} if key else {}
@@ -18,12 +20,14 @@ def test_booking_sends_a_confirmation_email(client, auth_headers, flight_id, mai
     assert r.status_code == 201
 
     assert len(mail_outbox) == 1
-    to, subject, body = mail_outbox[0]
-    assert to == "user@example.com"
-    assert subject == "Booking confirmed: Lahore to Karachi"
-    assert f"booking #{r.json()['id']}" in body
-    assert "Seats: 2 (economy)" in body
-    assert "Total paid: 300.00" in body  # 2 * 150.00
+    mail = mail_outbox[0]
+    assert mail.to == "user@example.com"
+    assert mail.subject == "Booking confirmed: Lahore to Karachi"
+    assert f"booking #{r.json()['id']}" in mail.text
+    assert "Seats: 2 (economy)" in mail.text
+    assert "Total paid: 300.00" in mail.text  # 2 * 150.00
+    # The HTML version carries the same facts.
+    assert "Seats" in mail.html and "2 (economy)" in mail.html and "300.00" in mail.html
 
 
 def test_failed_booking_sends_nothing(client, auth_headers, flight_id, mail_outbox):
@@ -80,11 +84,11 @@ def test_task_retries_when_the_mail_server_is_down(
 
     attempts = []
 
-    def flaky(to, subject, body):
+    def flaky(to, subject, text, html=None):
         attempts.append(1)
         if len(attempts) < 3:
             raise smtplib.SMTPServerDisconnected("server went away")
-        mail_outbox.append((to, subject, body))
+        mail_outbox.append(Mail(to, subject, text, html))
 
     monkeypatch.setattr(tasks, "send_email", flaky)
     result = send_booking_confirmation.apply(args=[booking_id])
@@ -99,7 +103,7 @@ def test_task_gives_up_after_three_retries(client, auth_headers, flight_id, monk
     booking_id = _book(client, auth_headers, flight_id).json()["id"]
     attempts = []
 
-    def always_down(to, subject, body):
+    def always_down(to, subject, text, html=None):
         attempts.append(1)
         raise smtplib.SMTPServerDisconnected("still down")
 
@@ -116,7 +120,7 @@ def test_a_bug_in_the_task_is_not_retried(client, auth_headers, flight_id, monke
     booking_id = _book(client, auth_headers, flight_id).json()["id"]
     attempts = []
 
-    def buggy(to, subject, body):
+    def buggy(to, subject, text, html=None):
         attempts.append(1)
         raise ValueError("not a mail-server problem")
 
@@ -144,11 +148,31 @@ def test_send_email_builds_the_message_and_sends_it(monkeypatch):
             captured["message"] = message
 
     monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
-    mailer.send_email("a@example.com", "Hi", "Body text")
+    mailer.send_email("a@example.com", "Hi", "Body text", "<p>Body html</p>")
 
     message = captured["message"]
     assert message["To"] == "a@example.com"
     assert message["Subject"] == "Hi"
     assert message["From"] == mailer.settings.mail_from
-    assert message.get_content().strip() == "Body text"
+    # One email, two versions: the mail client picks the best one it can show.
+    assert message.get_content_type() == "multipart/alternative"
+    assert message.get_body(("plain",)).get_content().strip() == "Body text"
+    assert message.get_body(("html",)).get_content().strip() == "<p>Body html</p>"
     assert captured["timeout"] == 10
+
+
+def test_names_are_escaped_in_the_html_email_but_not_in_the_text_one(
+    client, flight_id, mail_outbox
+):
+    client.post(
+        "/users/signup",
+        json={"name": "<b>Mallory</b> & co", "email": "m@example.com", "password": "password123",
+              "phone_number": None, "city": "Lahore", "country": "PK"},
+    )
+    token = client.post("/users/login", data={"username": "m@example.com", "password": "password123"}).json()
+    _book(client, {"Authorization": f"Bearer {token['access_token']}"}, flight_id)
+
+    mail = mail_outbox[0]
+    assert "<b>Mallory</b>" not in mail.html
+    assert "&lt;b&gt;Mallory&lt;/b&gt; &amp; co" in mail.html
+    assert "Hello <b>Mallory</b> & co," in mail.text

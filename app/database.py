@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     mail_from: str = "Aerofare <noreply@aerofare.local>"
+    # Where the React app is served: password reset emails link to it.
+    frontend_url: str = "http://localhost:5173"
 
 settings = Settings()
 

@@ -90,7 +90,7 @@ def test_a_token_signed_with_the_wrong_key_is_rejected(client, auth_headers):
 
 
 def test_a_valid_token_for_a_user_that_no_longer_exists_is_rejected(client):
-    ghost = create_access_token("999999")
+    ghost = create_access_token("999999", version=0)
 
     r = client.get("/users/me", headers={"Authorization": f"Bearer {ghost}"})
     assert_envelope(r, 401, "invalid_token")
@@ -141,7 +141,7 @@ def test_changing_password_needs_the_current_one_and_the_new_one_then_works(clie
         json={"current_password": "password123", "new_password": "brand-new-pass"},
         headers=auth_headers,
     )
-    assert ok.status_code == 204
+    assert ok.status_code == 200
 
     assert client.post(
         "/users/login", data={"username": "user@example.com", "password": "password123"}

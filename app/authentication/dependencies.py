@@ -37,7 +37,9 @@ CurrentTokenPayload = Annotated[TokenPayload, Depends(get_token_payload)]
 
 def get_current_user(payload: CurrentTokenPayload, db: DbSession) -> User:
     user = services.get_user(db, int(payload.subject))
-    if user is None:
+    # A password change or reset bumps token_version, which orphans every token
+    # issued before it. Checked here because the user row is loaded anyway.
+    if user is None or user.token_version != payload.version:
         raise _credentials_error()
     return user
 

@@ -1,0 +1,7 @@
+Hello {{ name }},
+
+Your booking #{{ booking_id }} is confirmed.
+
+{% for label, value in details %}
+{{ label }}: {{ value }}
+{% endfor %}
