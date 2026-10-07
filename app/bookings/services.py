@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.bookings.enums import BookingStatus
@@ -35,11 +37,75 @@ class BookingNotCancellable(Exception):
     pass
 
 
+class IdempotencyKeyReused(Exception):
+    """The same Idempotency-Key arrived with a different request."""
+
+
+class CreatedBooking(NamedTuple):
+    booking: Booking
+    replayed: bool  # True when this is an earlier booking returned again, not a new one
+
+
 def _utc_naive_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def create_booking(db: Session, user_id: int, new_booking: BookingCreate) -> Booking:
+def _find_by_key(db: Session, user_id: int, key: str) -> Booking | None:
+    return db.execute(
+        select(Booking).where(Booking.user_id == user_id, Booking.idempotency_key == key)
+    ).scalar_one_or_none()
+
+
+def _replay(existing: Booking, requested: BookingCreate) -> CreatedBooking:
+    # A key stands for ONE request. Reusing it for a different one is a client
+    # bug, and quietly returning the old booking would hide it.
+    if existing.flight_id != requested.flight_id or existing.seats_booked != requested.seats_booked:
+        raise IdempotencyKeyReused()
+    return CreatedBooking(existing, replayed=True)
+
+
+def create_booking(
+    db: Session, user_id: int, new_booking: BookingCreate, idempotency_key: str | None = None
+) -> CreatedBooking:
+    """Book seats. With an idempotency key, retrying the same request returns the
+    original booking instead of booking again.
+
+    Only successful bookings are remembered. A request that failed (no seats
+    left, flight gone) stores nothing, so it can simply be tried again."""
+    if idempotency_key is None:
+        return CreatedBooking(_insert_booking(db, user_id, new_booking, None), replayed=False)
+
+    # 1. The usual case: the client is retrying a request that finished earlier.
+    #    A plain lookup answers it without locking the flight, so a retry never
+    #    queues behind other people's bookings.
+    existing = _find_by_key(db, user_id, idempotency_key)
+    if existing is not None:
+        return _replay(existing, new_booking)
+
+    try:
+        return CreatedBooking(
+            _insert_booking(db, user_id, new_booking, idempotency_key), replayed=False
+        )
+    except (FlightDeparted, NotEnoughSeats, IntegrityError):
+        # 2. The rare case: two copies of the same request ran at the same time.
+        #    The loser can fail in two ways, because the winner already committed:
+        #      - IntegrityError: it got far enough to insert, and the unique
+        #        constraint on (user_id, idempotency_key) rejected it;
+        #      - NotEnoughSeats: the winner took the last seats first.
+        #    Either way the loser should not report a failure if its twin
+        #    succeeded. Roll back to end this transaction, which also drops its
+        #    old view of the data (MySQL's default isolation level can't see
+        #    rows committed after the transaction began), and look again.
+        db.rollback()
+        existing = _find_by_key(db, user_id, idempotency_key)
+        if existing is None:
+            raise  # a genuine failure: nothing was booked under this key
+        return _replay(existing, new_booking)
+
+
+def _insert_booking(
+    db: Session, user_id: int, new_booking: BookingCreate, idempotency_key: str | None
+) -> Booking:
     # FOR UPDATE locks this flight row until commit, so a second concurrent
     # booking on the same flight blocks here instead of racing the seat count.
     flight = db.execute(
@@ -63,6 +129,7 @@ def create_booking(db: Session, user_id: int, new_booking: BookingCreate) -> Boo
         seats_booked=new_booking.seats_booked,
         total_amount=flight.price * new_booking.seats_booked,
         status=BookingStatus.CONFIRMED,
+        idempotency_key=idempotency_key,
     )
     db.add(booking)
     db.flush()

@@ -66,7 +66,7 @@ def test_concurrent_bookings_cannot_oversell_the_last_seat(client, admin_headers
         try:
             booking = booking_services.create_booking(
                 db, user_id, BookingCreate(flight_id=flight_id, seats_booked=1)
-            )
+            ).booking
             outcome = ("ok", str(booking.id))
         except Exception as exc:  # noqa: BLE001 - we want to see whatever it raises
             outcome = ("error", type(exc).__name__)
