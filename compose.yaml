@@ -4,7 +4,8 @@ name: aerofare
 #
 # MySQL and Redis are NOT published to the host. They already run on the usual
 # ports on a development machine, and nothing outside this stack needs them.
-# Only the API is reachable, on http://localhost:8000.
+# Only the API (http://localhost:8000) and the Mailpit inbox
+# (http://localhost:8025) are reachable.
 
 x-app-env: &app-env
   # `mysql` and `redis` are service names: Compose gives each container a DNS
@@ -17,6 +18,8 @@ x-app-env: &app-env
   ALGORITHM: HS256
   ACCESS_TOKEN_EXPIRY_MINUTES: "30"
   LOG_FORMAT: json
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
 
 services:
   mysql:
@@ -79,6 +82,33 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # Same image as the API, different command: it pulls tasks off the Redis queue
+  # and runs them. Booking confirmation emails are sent from here, so a slow or
+  # broken mail server never makes a booking request slow or fail.
+  worker:
+    image: aerofare-api
+    command: ["celery", "-A", "app.worker", "worker", "--loglevel", "INFO", "--concurrency", "2"]
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+
+  # A fake mail server: accepts every email and shows it in a web page instead
+  # of delivering it, so nothing in this stack can reach a real inbox.
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   mysql-data:
