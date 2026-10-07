@@ -1,0 +1,80 @@
+name: aerofare
+
+# Everything the API needs, with one command:  docker compose up --build
+#
+# MySQL and Redis are NOT published to the host. They already run on the usual
+# ports on a development machine, and nothing outside this stack needs them.
+# Only the API is reachable, on http://localhost:8000.
+
+x-app-env: &app-env
+  # `mysql` and `redis` are service names: Compose gives each container a DNS
+  # name equal to its service name on the stack's private network.
+  DATABASE_URL: mysql+pymysql://aerofare:${MYSQL_PASSWORD:-aerofare-dev}@mysql:3306/aerofare
+  REDIS_URL: redis://redis:6379/0
+  # Read from your .env. Compose stops with this message if it is missing,
+  # instead of starting an API with an empty signing key.
+  SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env (generate one with: openssl rand -hex 32)}"
+  ALGORITHM: HS256
+  ACCESS_TOKEN_EXPIRY_MINUTES: "30"
+  LOG_FORMAT: json
+
+services:
+  mysql:
+    image: mysql:26.7
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-aerofare-dev-root}
+      MYSQL_DATABASE: aerofare
+      # The API connects as this user, which can only touch the aerofare
+      # database, instead of as root.
+      MYSQL_USER: aerofare
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-aerofare-dev}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # $$ stops Compose from substituting; the container's own shell expands it.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Runs once and exits. Keeping migrations out of the API's start command
+  # means that starting three API containers would not run three migrations
+  # at the same time.
+  migrate:
+    image: aerofare-api  # the image the api service builds; no second build
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: aerofare-api
+    environment: *app-env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mysql-data:

@@ -56,6 +56,20 @@ npm install
 npm run dev                 # http://localhost:5173
 ```
 
+### With Docker
+
+Needs only Docker. One command starts MySQL, Redis, a one-off migration job and the API.
+
+```bash
+cp .env.example .env        # set SECRET_KEY, e.g. from: openssl rand -hex 32
+docker compose up --build   # http://localhost:8000/docs
+```
+
+- Stop any local `fastapi` server first: both want port 8000.
+- MySQL and Redis are not published to your machine, so they cannot clash with ones you already run.
+- Data lives in a named volume and survives `docker compose down`. `docker compose down -v` deletes it.
+- The migration job runs `alembic upgrade head` once and exits, then the API starts.
+
 ## What's next
 
 - Automated tests around the booking and payment lifecycle, starting with the concurrent-booking

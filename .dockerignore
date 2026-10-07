@@ -1,0 +1,20 @@
+# Nothing here is needed to run the API, and some of it must never be baked
+# into an image: .env holds real secrets, .git holds the whole history.
+.git
+.github
+.env
+.env.*
+!.env.example
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.vscode
+.claude
+
+# Not part of the API image.
+frontend
+tests
+docs
+scripts
