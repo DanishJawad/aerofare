@@ -6,10 +6,12 @@ import { SiteLayout } from "./components/SiteLayout"
 import { BookingsPage } from "./pages/BookingsPage"
 import { FlightDetailPage } from "./pages/FlightDetailPage"
 import { FlightsPage } from "./pages/FlightsPage"
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage"
 import { LoginPage } from "./pages/LoginPage"
 import { NotFoundPage } from "./pages/NotFoundPage"
 import { PaymentsPage } from "./pages/PaymentsPage"
 import { ProfilePage } from "./pages/ProfilePage"
+import { ResetPasswordPage } from "./pages/ResetPasswordPage"
 import { SignupPage } from "./pages/SignupPage"
 import { AdminAirportsPage } from "./pages/admin/AdminAirportsPage"
 import { AdminBookingsPage } from "./pages/admin/AdminBookingsPage"
@@ -21,6 +23,8 @@ const TITLES: [RegExp, string][] = [
   [/^\/flights\/\d+/, "Flight details"],
   [/^\/login/, "Log in"],
   [/^\/signup/, "Create an account"],
+  [/^\/forgot-password/, "Forgot password"],
+  [/^\/reset-password/, "Reset password"],
   [/^\/bookings/, "My trips"],
   [/^\/payments/, "Payments"],
   [/^\/profile/, "Profile"],
@@ -50,6 +54,8 @@ export default function App() {
         <Route path="flights/:id" element={<FlightDetailPage />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="signup" element={<SignupPage />} />
+        <Route path="forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="reset-password" element={<ResetPasswordPage />} />
         <Route
           path="bookings"
           element={

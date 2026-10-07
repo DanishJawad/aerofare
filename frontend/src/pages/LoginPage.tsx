@@ -9,6 +9,7 @@ interface LoginState {
   from?: string
   reason?: "expired"
   signedUp?: string
+  passwordReset?: boolean
 }
 
 /** Only follow same-app paths, never an absolute URL smuggled into state. */
@@ -71,6 +72,11 @@ export function LoginPage() {
                 Log in with your new password to continue.
               </Alert>
             )}
+            {state.passwordReset && !error && (
+              <Alert tone="success" title="Password updated">
+                Log in with your new password.
+              </Alert>
+            )}
             {error && <Alert tone="error">{error}</Alert>}
 
             <TextField
@@ -81,14 +87,22 @@ export function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            <TextField
-              label="Password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            {/* Outer .field only for its 8px gap, so the link reads as part of the password field. */}
+            <div className="field">
+              <TextField
+                label="Password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <p className="field-hint">
+                <Link to="/forgot-password" state={{ email: email.trim() || undefined }}>
+                  Forgot your password?
+                </Link>
+              </p>
+            </div>
             <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={submitting}>
               {submitting && <Spinner />}
               {submitting ? "Logging in…" : "Log in"}

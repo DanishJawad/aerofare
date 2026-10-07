@@ -6,6 +6,7 @@ import type {
   Flight,
   FlightInput,
   FlightSearchParams,
+  MessageResponse,
   PasswordChange,
   Payment,
   SignupInput,
@@ -203,7 +204,21 @@ export const api = {
   /** Session restore on page load: a stale token should log out quietly, not redirect. */
   restoreSession: () => request<User>("/users/me", { redirectOn401: false }),
   updateMe: (input: UserUpdate) => apiPatch<User>("/users/me", input),
-  changePassword: (input: PasswordChange) => apiPost<void>("/users/me/password", input),
+  /**
+   * Changing the password ends every older login, including the one that made the
+   * request, so the server returns a fresh token and this keeps the session on it.
+   */
+  changePassword: async (input: PasswordChange) => {
+    const { access_token } = await apiPost<TokenResponse>("/users/me/password", input)
+    setToken(access_token)
+  },
+  /** Always resolves the same way for any address, so it reveals nothing about who has an account. */
+  forgotPassword: (email: string) => apiPost<MessageResponse>("/users/forgot-password", { email }),
+  /** A reset ends every login, so the stored token is dead: drop it. The user logs in again. */
+  resetPassword: async (token: string, newPassword: string) => {
+    await apiPost<void>("/users/reset-password", { token, new_password: newPassword })
+    clearToken()
+  },
   listUsers: () => apiGet<User[]>("/users"),
 
   // airports

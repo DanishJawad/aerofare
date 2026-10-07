@@ -64,6 +64,10 @@ export interface PasswordChange {
   new_password: string
 }
 
+export interface MessageResponse {
+  message: string
+}
+
 export interface TokenResponse {
   access_token: string
   token_type: "bearer"
