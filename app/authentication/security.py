@@ -61,11 +61,12 @@ def decode_access_token(token: str) -> TokenPayload:
 
 def revoke_token(jti: str, expires_at: datetime) -> None:
     """Blacklist this token's jti until it would have expired anyway.
-    SETEX sets the key AND its TTL in one call; Redis deletes it by itself once
-    the TTL hits zero, so a revoked token never needs manual cleanup."""
+    SET with EX writes the key AND its TTL in one atomic command; Redis deletes
+    it by itself once the TTL hits zero, so a revoked token never needs manual
+    cleanup. (This replaces SETEX, which redis-py now marks as deprecated.)"""
     ttl_seconds = int((expires_at - datetime.now(timezone.utc)).total_seconds())
     if ttl_seconds > 0:
-        redis_client.setex(f"blacklist:{jti}", ttl_seconds, "1")
+        redis_client.set(f"blacklist:{jti}", "1", ex=ttl_seconds)
 
 
 def is_token_revoked(jti: str) -> bool:

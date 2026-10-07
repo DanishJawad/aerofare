@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A new push to the same branch cancels the run still going for the old one,
+# so quick successive pushes do not each use a full run of free minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # MySQL and Redis start as containers next to the job. The health checks
+    # make the job wait until each one answers, not merely until it has started.
+    services:
+      mysql:
+        # Same major.minor as the MySQL used for development.
+        image: mysql:26.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: aerofare
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    # CI has no .env file, so the settings the app needs come from here. The
+    # secret key is a throwaway value that only exists for these test runs.
+    env:
+      DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/aerofare
+      REDIS_URL: redis://127.0.0.1:6379/0
+      SECRET_KEY: ci-only-key-0123456789abcdef0123456789abcdef0123456789abcdef
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRY_MINUTES: "30"
+      TEST_DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/aerofare_test
+      TEST_REDIS_URL: redis://127.0.0.1:6379/1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # --locked fails if uv.lock and pyproject.toml disagree, so CI can never
+      # quietly install different versions from the ones that were tested.
+      # The Python version comes from .python-version.
+      - run: uv sync --locked
+
+      # Builds the schema from the migrations alone, on an empty database.
+      - name: Migrations build the database from scratch
+        run: uv run alembic upgrade head
+
+      # Fails if a model has a column or index that no migration creates.
+      - name: Models and migrations match
+        run: uv run alembic check
+
+      - name: Tests
+        run: uv run pytest tests/ -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm ci installs exactly what package-lock.json says and fails if
+      # package.json disagrees with it. npm install would quietly update it.
+      - run: npm ci
+
+      - run: npm run lint
+
+      # Runs tsc (type check) and then the production build.
+      - run: npm run build
+        env:
+          VITE_API_URL: http://localhost:8000
