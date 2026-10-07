@@ -1,15 +1,60 @@
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import os
+import re
+from urllib.parse import urlparse
 
-from app.database import Base, get_db
-from app.main import app  # importing app registers every model on Base.metadata
+# Must run before any `app` import: the app reads REDIS_URL once, when
+# app.database loads. Environment variables beat the .env file, so this points
+# the whole app (not just the tests) at a separate Redis database, and the
+# per-test flush below can never touch the one the dev server uses (db 0).
+TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/1")
+os.environ["REDIS_URL"] = TEST_REDIS_URL
 
-TEST_URL = "mysql+pymysql://root:root@localhost:3306/aerofare_test"
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import URL, create_engine, text  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from app.database import Base, get_db  # noqa: E402
+from app.main import app  # noqa: E402 - importing app registers every model on Base.metadata
+from app.redis_client import redis_client  # noqa: E402
+
+TEST_URL = os.environ.get(
+    "TEST_DATABASE_URL", "mysql+pymysql://root:root@localhost:3306/aerofare_test"
+)
 
 engine = create_engine(TEST_URL, pool_pre_ping=True)
 TestingSessionLocal = sessionmaker(bind=engine)
+
+# These tests drop every table and flush Redis. Refuse to run at all if either
+# target doesn't look like a throwaway one, rather than trust that nobody ever
+# mis-sets an environment variable.
+if not (engine.url.database or "").endswith("_test"):
+    raise RuntimeError(f"Refusing to run: test database must end in '_test', got {engine.url.database!r}")
+if urlparse(TEST_REDIS_URL).path in ("", "/", "/0"):
+    raise RuntimeError("Refusing to run: Redis db 0 is the dev server's database; use /1 or higher")
+
+
+def _create_test_database_if_missing() -> None:
+    """A fresh MySQL (a new teammate's machine, a CI container) has no
+    aerofare_test yet, and create_all can't create the database itself. The
+    name already passed the '_test' check above, and is restricted to plain
+    identifier characters before it goes into the statement."""
+    name = engine.url.database
+    if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+        raise RuntimeError(f"Unexpected characters in test database name {name!r}")
+    # URL.set(database=None) would mean "leave it unchanged", not "remove it",
+    # so the database-less URL has to be built from scratch.
+    url = engine.url
+    server_url = URL.create(
+        url.drivername, url.username, url.password, url.host, url.port, database=None, query=url.query
+    )
+    server_only = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    with server_only.connect() as conn:
+        conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{name}`"))
+    server_only.dispose()
+
+
+_create_test_database_if_missing()
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +63,14 @@ def fresh_schema():
     into each other."""
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def fresh_redis():
+    """The token blacklist lives in Redis, so it needs the same per-test reset
+    as the tables: a revoked token from one test must not exist in the next."""
+    redis_client.flushdb()
     yield
 
 
