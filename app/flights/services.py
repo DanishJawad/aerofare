@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from .models import Flight
@@ -32,7 +32,10 @@ def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> Flight 
     db.refresh(db_flight)
     return db_flight
 
-def search_flights(search_params: FlightSearch , db: Session) -> list[Flight]:
+def build_search_query(search_params: FlightSearch) -> Select[tuple[Flight]]:
+    """The SELECT behind GET /flights/search. Separate from search_flights so the
+    benchmark in scripts/bench_search.py can run, and EXPLAIN, the exact query
+    the API runs."""
     stmt = select(Flight)
 
     if search_params.arrival_airport:
@@ -56,4 +59,8 @@ def search_flights(search_params: FlightSearch , db: Session) -> list[Flight]:
     if search_params.flight_class:
         stmt = stmt.where(Flight.flight_class == search_params.flight_class)
 
-    return list(db.execute(stmt).scalars().all())
+    return stmt
+
+
+def search_flights(search_params: FlightSearch, db: Session) -> list[Flight]:
+    return list(db.execute(build_search_query(search_params)).scalars().all())
