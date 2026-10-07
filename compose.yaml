@@ -50,7 +50,11 @@ services:
   # means that starting three API containers would not run three migrations
   # at the same time.
   migrate:
-    image: aerofare-api  # the image the api service builds; no second build
+    # Same build and same image name as the api service. Building it here (the
+    # second build is a full cache hit) stops Compose from trying to download
+    # an image called aerofare-api from the internet on a fresh clone.
+    build: .
+    image: aerofare-api
     command: ["alembic", "upgrade", "head"]
     environment: *app-env
     depends_on:
