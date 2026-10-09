@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     mail_from: str = "Aerofare <noreply@aerofare.local>"
     # Where the React app is served: password reset emails link to it.
     frontend_url: str = "http://localhost:5173"
+    # Browser origins allowed to call the API. A JSON list in the environment,
+    # e.g. CORS_ORIGINS='["https://aerofare.example"]'.
+    cors_origins: list[str] = ["http://localhost:5173"]
 
 settings = Settings()
 
