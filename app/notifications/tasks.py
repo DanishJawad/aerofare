@@ -5,12 +5,13 @@ from collections.abc import Callable
 from app.airports.models import Airport
 from app.authentication.models import User
 from app.authentication.password_reset import RESET_TOKEN_TTL_SECONDS
+from app.commons.log_config import request_id_var
 from app.bookings.enums import BookingStatus
 from app.bookings.models import Booking
 from app.database import SessionLocal, settings
 from app.flights.models import Flight
 from app.payments import models as _payment_models  # noqa: F401 - the worker must load every model
-from app.worker import celery_app
+from app.worker import REQUEST_ID_HEADER, celery_app
 
 from .mailer import send_email
 from .rendering import render_email
@@ -96,7 +97,9 @@ def _enqueue(task: Callable[..., object], label: str, *args: object) -> None:
     request did is already committed, and the email is the best-effort part.
     `label` is what gets logged: the args can hold a secret (a reset token)."""
     try:
-        task.delay(*args)  # type: ignore[attr-defined]
+        # The current request's id travels with the task as a message header,
+        # so the worker's log lines for it can be matched to this request.
+        task.apply_async(args, headers={REQUEST_ID_HEADER: request_id_var.get()})  # type: ignore[attr-defined]
     except Exception:
         logger.exception("Could not queue %s", label)
 

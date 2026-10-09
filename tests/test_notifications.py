@@ -44,10 +44,10 @@ def test_replayed_booking_does_not_send_a_second_email(client, auth_headers, fli
 def test_booking_succeeds_even_if_the_email_cannot_be_queued(
     client, auth_headers, flight_id, mail_outbox, monkeypatch
 ):
-    def broker_down(booking_id):
+    def broker_down(*args, **kwargs):
         raise ConnectionError("broker unreachable")
 
-    monkeypatch.setattr(tasks.send_booking_confirmation, "delay", broker_down)
+    monkeypatch.setattr(tasks.send_booking_confirmation, "apply_async", broker_down)
 
     r = _book(client, auth_headers, flight_id)
     assert r.status_code == 201
@@ -176,3 +176,40 @@ def test_names_are_escaped_in_the_html_email_but_not_in_the_text_one(
     assert "<b>Mallory</b>" not in mail.html
     assert "&lt;b&gt;Mallory&lt;/b&gt; &amp; co" in mail.html
     assert "Hello <b>Mallory</b> & co," in mail.text
+
+
+def test_the_request_id_travels_with_the_queued_task(monkeypatch):
+    from app.commons.log_config import request_id_var
+
+    sent = {}
+    monkeypatch.setattr(
+        tasks.send_booking_confirmation, "apply_async", lambda args, headers: sent.update(headers)
+    )
+    token = request_id_var.set("req-abc-123")
+    try:
+        tasks.enqueue_booking_confirmation(1)
+    finally:
+        request_id_var.reset(token)
+
+    assert sent == {"request_id": "req-abc-123"}
+
+
+def test_the_worker_logs_with_the_request_id_from_the_header(
+    client, auth_headers, flight_id, mail_outbox, monkeypatch
+):
+    """Run the task the way a worker would: outside any request, given only the
+    header. While it runs, the request id must be the one from the header, and
+    afterwards it must be cleared so the next task does not inherit it."""
+    from app.commons.log_config import request_id_var
+
+    booking_id = _book(client, auth_headers, flight_id).json()["id"]
+    seen = []
+    monkeypatch.setattr(
+        tasks, "send_email", lambda to, subject, text, html=None: seen.append(request_id_var.get())
+    )
+
+    assert request_id_var.get() == "-"  # not inside a request
+    send_booking_confirmation.apply(args=[booking_id], headers={"request_id": "req-from-api"})
+
+    assert seen == ["req-from-api"]
+    assert request_id_var.get() == "-"
