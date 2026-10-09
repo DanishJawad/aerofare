@@ -17,6 +17,8 @@ import type {
 } from "./types"
 
 const BASE_URL = import.meta.env.VITE_API_URL
+/** The most flights one search returns. The API's default is the same; this makes it explicit. */
+export const SEARCH_PAGE_SIZE = 100
 const TOKEN_KEY = "aerofare.token"
 
 // ---------------------------------------------------------------- token storage
@@ -229,8 +231,9 @@ export const api = {
 
   // flights
   listFlights: () => apiGet<Flight[]>("/flights"),
+  /** One page of results, ordered by departure. A full page means there may be more. */
   searchFlights: (params: FlightSearchParams) =>
-    apiGet<Flight[]>("/flights/search", { ...params }),
+    apiGet<Flight[]>("/flights/search", { ...params, limit: SEARCH_PAGE_SIZE }),
   getFlight: (id: number) => apiGet<Flight>(`/flights/${id}`),
   createFlight: (input: FlightInput) => apiPost<Flight>("/flights", input),
   updateFlight: (id: number, input: Partial<FlightInput>) =>

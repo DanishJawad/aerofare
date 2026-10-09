@@ -19,7 +19,10 @@ def get_all_flights(db: DbSession):
 
 @router.get("/search", response_model=list[FlightResponse])
 def search_flights(filters: Annotated[FlightSearch, Query()], db: DbSession):
-    """Search flights. Every filter is optional and filters combine with AND. Times are compared in UTC."""
+    """Search flights. Every filter is optional and filters combine with AND. Times are compared in UTC.
+
+    Results are ordered by departure time. At most `limit` are returned (default 100, max 500);
+    use `offset` to get the next page."""
     return services.search_flights(filters, db)
 
 

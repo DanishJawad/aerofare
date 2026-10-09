@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react"
 import { useSearchParams } from "react-router-dom"
-import { api } from "../api"
+import { api, SEARCH_PAGE_SIZE } from "../api"
 import { EmptyState, ErrorState, SkeletonList } from "../components/Feedback"
 import { SelectField, TextField } from "../components/Field"
 import { FlightCard } from "../components/FlightCard"
@@ -187,6 +187,8 @@ export function FlightsPage() {
   const upcoming = all.filter((f) => !hasDeparted(f))
   const pastCount = all.length - upcoming.length
   const visible = showPast ? all : upcoming
+  // A full page from search means more matches may exist beyond it.
+  const pageFull = hasFilters && (flightsReq.data?.length ?? 0) >= SEARCH_PAGE_SIZE
 
   function renderResults() {
     const error = flightsReq.error ?? airportsReq.error
@@ -297,6 +299,12 @@ export function FlightsPage() {
             </div>
           )}
         </div>
+        {ready && pageFull && (
+          <p className="muted">
+            Showing the first {SEARCH_PAGE_SIZE} matches by departure time. Narrow the search to see
+            the rest.
+          </p>
+        )}
         {renderResults()}
       </section>
     </>

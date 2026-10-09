@@ -59,7 +59,14 @@ def build_search_query(search_params: FlightSearch) -> Select[tuple[Flight]]:
     if search_params.flight_class:
         stmt = stmt.where(Flight.flight_class == search_params.flight_class)
 
-    return stmt
+    # id breaks ties between flights that depart at the same moment. Without it
+    # their order is not guaranteed, and a flight could appear on two pages or
+    # on none.
+    return (
+        stmt.order_by(Flight.start_time, Flight.id)
+        .limit(search_params.limit)
+        .offset(search_params.offset)
+    )
 
 
 def search_flights(search_params: FlightSearch, db: Session) -> list[Flight]:

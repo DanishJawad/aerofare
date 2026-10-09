@@ -113,3 +113,25 @@ def test_search_times_with_a_utc_offset_are_converted_to_utc(client, admin_heade
     assert _search(client, start_time="2030-06-15T12:30:00+05:00") == {flight}
     assert _search(client, start_time="2030-06-15T13:30:00+05:00") == set()  # 08:30 UTC: too late
     assert _search(client, end_time="2030-06-15T15:00:00+05:00") == {flight}  # lands 10:00 UTC
+
+
+def test_results_are_ordered_by_departure_and_paged(client, admin_headers, airports):
+    # Created out of order on purpose, so insertion order cannot pass the test.
+    late = _flight(client, admin_headers, airports["LHE"], airports["KHI"], day=20)
+    early = _flight(client, admin_headers, airports["LHE"], airports["KHI"], day=10)
+    middle = _flight(client, admin_headers, airports["LHE"], airports["KHI"], day=15)
+
+    def ids(**params) -> list[int]:
+        r = client.get("/flights/search", params={"departure_airport": airports["LHE"], **params})
+        assert r.status_code == 200
+        return [f["id"] for f in r.json()]
+
+    assert ids() == [early, middle, late]
+    assert ids(limit=2) == [early, middle]
+    assert ids(limit=2, offset=2) == [late]
+
+
+def test_limit_is_bounded(client):
+    assert client.get("/flights/search", params={"limit": 0}).status_code == 422
+    assert client.get("/flights/search", params={"limit": 501}).status_code == 422
+    assert client.get("/flights/search", params={"offset": -1}).status_code == 422

@@ -108,6 +108,10 @@ class FlightSearch(BaseModel):
     min_price: Decimal | None =  Field(default=None,max_digits=10 , decimal_places=2, ge=0)
     max_price: Decimal | None =  Field(default=None,max_digits=10 , decimal_places=2, ge=0)
     flight_class: FlightClass | None = None
+    # Without a cap, one broad search returns the whole table. Results are
+    # ordered by departure time, so offset pages through them in a stable order.
+    limit: int = Field(default=100, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
 
     # Same conversion as on create and update. Search was missing it, so a
     # time sent with an offset was compared as if it were UTC.
