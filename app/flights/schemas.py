@@ -108,3 +108,10 @@ class FlightSearch(BaseModel):
     min_price: Decimal | None =  Field(default=None,max_digits=10 , decimal_places=2, ge=0)
     max_price: Decimal | None =  Field(default=None,max_digits=10 , decimal_places=2, ge=0)
     flight_class: FlightClass | None = None
+
+    # Same conversion as on create and update. Search was missing it, so a
+    # time sent with an offset was compared as if it were UTC.
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalise_timezone(cls, v: datetime | None) -> datetime | None:
+        return _to_utc(v) if v is not None else None

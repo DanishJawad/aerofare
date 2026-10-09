@@ -101,3 +101,15 @@ def test_filters_combine_with_and_and_no_match_is_an_empty_list(client, admin_he
     )
     assert found == {wanted}
     assert _search(client, departure_airport=airports["ISB"]) == set()  # 200 and [], not 404
+
+
+def test_search_times_with_a_utc_offset_are_converted_to_utc(client, admin_headers, airports):
+    """The flight departs 08:00 UTC, which is 13:00 in Pakistan (+05:00). Asking
+    for flights from 12:30 Pakistan time (07:30 UTC) must include it. Without
+    the conversion, 12:30 is compared to 08:00 as if both were UTC and the
+    flight disappears from the results."""
+    flight = _flight(client, admin_headers, airports["LHE"], airports["KHI"], day=15)
+
+    assert _search(client, start_time="2030-06-15T12:30:00+05:00") == {flight}
+    assert _search(client, start_time="2030-06-15T13:30:00+05:00") == set()  # 08:30 UTC: too late
+    assert _search(client, end_time="2030-06-15T15:00:00+05:00") == {flight}  # lands 10:00 UTC
