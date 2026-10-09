@@ -7,7 +7,7 @@ flights, book seats, pay, cancel and get refunds, and admins manage airports and
 I cared about is correctness under concurrency: two people booking the last seat, a cancel racing
 a refund, and a client retrying a booking after a dropped response. Tests for those run against
 real MySQL and Redis in CI. One measured result: a composite index cut the rows read per route
-search from 6,776 to 36-66 on 200,000 seeded flights.
+search from 6,778 to 36-66 on 200,000 seeded flights.
 
 ## How it handles the hard cases
 
@@ -47,17 +47,19 @@ search from 6,776 to 36-66 on 200,000 seeded flights.
 
 ## Measured: flight search
 
-`GET /flights/search` on 200,000 seeded flights, median of 3 runs of 50 calls each:
+`GET /flights/search` on 200,000 seeded flights, median of 6 runs of 50 calls each:
 
 | Search | Rows examined, before to after | Median ms, before to after |
 |---|---:|---:|
-| route + one week | 6,776 to 36 | 2.79 to 0.57 |
-| route + one month + class | 6,776 to 40 | 4.38 to 0.51 |
-| route only | 6,776 to 66 | 7.34 to 1.13 |
-| date only, no route (control) | 200,000 to 200,000 | 62.34 to 62.50 |
+| route + one week | 6,778 to 36 | 2.64 to 0.68 |
+| route + one month + class | 6,778 to 40 | 4.45 to 0.59 |
+| route only | 6,842 to 66 | 7.26 to 1.27 |
+| date only, no route (control) | 200,100 to 200,100 | 62.19 to 62.48 |
 
-I expected a table scan as the baseline. MySQL was already intersecting two foreign-key indexes,
-so the gain is 5-9x, not more, and a search with no route is not helped at all. The method, the
+Rows examined is exact and the same on every run. The "before" timings varied a lot between runs,
+so read the speed-up as roughly 4-8x. I expected a table scan as the baseline, but MySQL was
+already intersecting two foreign-key indexes, which is why the gain is not larger. A search with no
+route is not helped at all. The method, the
 `EXPLAIN ANALYZE` plans, the index's cost and the exact commands to reproduce are in
 [docs/query-optimization.md](docs/query-optimization.md).
 
@@ -121,13 +123,15 @@ To reproduce the search benchmark, see the end of
 - **Rate limits are a fixed window**, so a burst across a window boundary can reach twice the
   limit. Behind a proxy, the per-IP limit would see the proxy's address.
 - **A reset link stays valid until used or expired**, even if a newer one was requested.
-- **Search has no `LIMIT` or `ORDER BY`**, and a date-only search scans the whole table.
-- **No real users, and not deployed.** The CORS origin is hardcoded to the local frontend.
+- **A date-only search scans the whole table.** Search returns at most 100 rows per page, but it
+  still has to read every flight to find them.
+- **No real users, and not deployed.**
 
 ## What I would do next
 
-- Deploy it: managed MySQL and Redis, a real SMTP provider, CORS and secrets from the environment.
-- Paginate the list endpoints and add a `LIMIT` to search.
+- Deploy it: managed MySQL and Redis, and a real SMTP provider.
+- Paginate the remaining list endpoints. Search is paged; the flight list is not yet, because the
+  frontend uses it to look up the flight behind each booking.
 - Add a `start_time` index if date-only searches turn out to be common.
 - Pass the request id into worker logs, so an email can be traced back to its request.
 - Build the Docker image in CI, so a broken Dockerfile fails a push.

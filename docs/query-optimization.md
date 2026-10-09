@@ -1,21 +1,25 @@
 # Flight search: one index, measured
 
 `GET /flights/search` filters flights by route and dates. On 200,000 flights, adding one composite index cut
-the rows MySQL reads for a route search from 6,776 to between 36 and 66, and the median query time from
-2.8-7.3 ms to 0.5-1.1 ms. A search by date alone is not helped and still scans the whole table.
+the rows MySQL reads for a route search from 6,778 to between 36 and 66, and the median query time from
+2.6-7.3 ms to 0.6-1.3 ms, about 4-8x. A search by date alone is not helped and still scans the whole table.
 
 ## Result
 
-Median of three runs, each run the median of 50 timed calls (10 warm-up calls discarded). The run-to-run
-spread (highest median over lowest) was at most 17%, in the row that varied most, and rows examined was
-identical in every run.
+Six runs on each side: two freshly seeded databases with the same rows, three runs each. Each run is the
+median of 50 timed calls after 10 warm-up calls. The table shows the median of the six runs, and the range
+across them.
 
-| Search | Rows returned | Rows MySQL examined, before → after | Median ms, before → after | Faster |
-|---|---:|---:|---:|---:|
-| route + one week | 2 | 6,776 → 36 | 2.79 → 0.57 | 4.9x |
-| route + one month + class | 2 | 6,776 → 40 | 4.38 → 0.51 | 8.6x |
-| route only | 66 | 6,776 → 66 | 7.34 → 1.13 | 6.5x |
-| control: one day, no route | 408 | 200,000 → 200,000 | 62.34 → 62.50 | 1.0x |
+Rows examined was identical in every run, so that column is exact. The timings are not: the "before" route
+searches moved between about 2 ms and 7 ms from run to run, while the "after" ones stayed within a few
+tenths of a millisecond. Read the speed-up as "roughly 4-8x", not as a precise figure.
+
+| Search | Rows returned | Rows MySQL examined, before → after | Median ms before (range) | Median ms after (range) | Faster |
+|---|---:|---:|---:|---:|---:|
+| route + one week | 2 | 6,778 → 36 | 2.64 (1.84-3.54) | 0.68 (0.64-1.38) | 3.9x |
+| route + one month + class | 2 | 6,778 → 40 | 4.45 (2.16-6.70) | 0.59 (0.56-0.82) | 7.5x |
+| route only | 66 | 6,842 → 66 | 7.26 (5.58-8.05) | 1.27 (1.16-1.82) | 5.7x |
+| control: one day, no route | 100 | 200,100 → 200,100 | 62.19 (60.97-62.70) | 62.48 (60.69-65.16) | 1.0x |
 
 The last row is a control. It has no route, so an index that starts with the route cannot serve it. It is
 in the table to show where the change stops working.
@@ -27,7 +31,7 @@ in the table to show where the change stops working.
 - **Query:** the exact query the API runs. `build_search_query` in `app/flights/services.py` builds it, and
   the benchmark calls the real `search_flights`, so the time includes building the ORM objects. HTTP is not
   included.
-- **Environment:** Apple M2, MySQL 26.7.0 (Homebrew), Python 3.14.3, 2026-10-07. The InnoDB buffer pool is
+- **Environment:** Apple M2, MySQL 26.7.0 (Homebrew), Python 3.14.3, 2026-10-09. The InnoDB buffer pool is
   128 MB and the table with its indexes is about 30 MB, so every run was served from memory.
 
 ## What was wrong
@@ -78,13 +82,16 @@ return 2: the API bounds the window by `end_time`, and the index can only bound 
 
 - It is one machine with a warm cache. Absolute times will differ elsewhere. The rows-examined column is the
   part that carries over.
-- The speed-up is 5-9x at 200,000 rows, where the "before" was already a few milliseconds. The row counts
+- The speed-up is roughly 4-8x at 200,000 rows, where the "before" was already a few milliseconds. The row counts
   suggest the gap grows with the table: the old plan reads every flight of two airports, the new one reads
   one route. I did not measure larger tables.
 - Uniform routes understate busy ones. A hub-to-hub search would match many more rows on both versions.
 - A date-only search still reads all 200,000 rows (62 ms). A separate index on `start_time` would serve it.
   I did not add one, because I have not checked how often users search without a route.
-- `GET /flights/search` has no `LIMIT` and no `ORDER BY`. It returns every match and the frontend sorts them.
+- Search now orders by departure time and returns at most 100 rows by default. That is why the control
+  returns 100 rows and examines 200,100: it reads every row, then sorts the matches. An earlier measurement,
+  before `ORDER BY` and `LIMIT` were added, gave the same picture: 6,776 rows examined before the index and
+  a 5-9x speed-up.
 
 ## Reproduce
 
@@ -98,13 +105,19 @@ uv run python -m scripts.seed_flights --recreate
 uv run python -m scripts.bench_search --label after
 
 # Before: drop the index from the same rows, refresh statistics, measure.
-DATABASE_URL=$BENCH_DATABASE_URL uv run alembic downgrade -1
+# 32fa4a159ffc is the revision just before the index. Not "-1": newer
+# migrations sit on top of it.
+DATABASE_URL=$BENCH_DATABASE_URL uv run alembic downgrade 32fa4a159ffc
 mysql -e "ANALYZE TABLE aerofare_bench.flights"
 uv run python -m scripts.bench_search --label before
 
 # Put the index back.
 DATABASE_URL=$BENCH_DATABASE_URL uv run alembic upgrade head
 ```
+
+Start every cycle from `--recreate`. The downgrade creates a `departure_airport` index explicitly, and
+unlike the automatic one, MySQL keeps it when the composite index comes back. A second downgrade on the
+same database then fails with "duplicate key name". I hit this on my own second run.
 
 `bench_search` prints the table above plus the `EXPLAIN ANALYZE` plan for each search. The two scripts are
 `scripts/seed_flights.py` and `scripts/bench_search.py`.
