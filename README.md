@@ -31,8 +31,8 @@ search from 6,778 to 36-66 on 200,000 seeded flights.
 ## What else is in it
 
 - **One error shape.** Every error is `{"error": {"code", "message", "details", "request_id"}}`.
-  The request id is also the `X-Request-ID` header and appears on every log line, so a user's
-  report can be found in the logs.
+  The request id is also the `X-Request-ID` header and appears on every log line, including the
+  worker's lines for an email that request queued, so a user's report can be found in the logs.
 - **Documented errors.** `/docs` shows the error shape for each route. Tests check that every
   route documents 422 and 500, that routes needing a login document 401 and 503, that admin
   routes document 403, and that all of them use the shared shape.
@@ -42,8 +42,8 @@ search from 6,778 to 36-66 on 200,000 seeded flights.
   find registered emails. The reset token is single-use, expires after 15 minutes and is stored
   in Redis only as a hash. Requests are rate limited per address and per IP.
 - **CI** (GitHub Actions) runs the tests on a real MySQL and Redis, applies the migrations to an
-  empty database, runs `alembic check` so models and migrations cannot drift, and builds the
-  frontend.
+  empty database, runs `alembic check` so models and migrations cannot drift, builds the
+  frontend, and builds the Docker image.
 
 ## Measured: flight search
 
@@ -133,5 +133,3 @@ To reproduce the search benchmark, see the end of
 - Paginate the remaining list endpoints. Search is paged; the flight list is not yet, because the
   frontend uses it to look up the flight behind each booking.
 - Add a `start_time` index if date-only searches turn out to be common.
-- Pass the request id into worker logs, so an email can be traced back to its request.
-- Build the Docker image in CI, so a broken Dockerfile fails a push.
