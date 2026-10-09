@@ -104,3 +104,32 @@ jobs:
       - run: npm run build
         env:
           VITE_API_URL: http://localhost:8000
+
+  # The tests above run from a uv environment, not from the Docker image, so a
+  # broken Dockerfile (a missing file, a dependency that fails to install in
+  # the slim image) would pass them. This builds the image and imports the API
+  # and the worker inside it.
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the image
+        run: docker build -t aerofare-api .
+
+      # Importing reads the settings but does not connect to anything, so
+      # placeholder values are enough.
+      - name: The API and the worker import inside the image
+        run: >-
+          docker run --rm
+          -e DATABASE_URL=mysql+pymysql://u:p@localhost/aerofare
+          -e REDIS_URL=redis://localhost:6379/0
+          -e SECRET_KEY=ci-only-placeholder-key-0123456789abcdef
+          -e ALGORITHM=HS256 -e ACCESS_TOKEN_EXPIRY_MINUTES=30
+          aerofare-api python -c "import app.main, app.worker"
+
+      - name: compose.yaml is valid
+        run: docker compose config --quiet
+        env:
+          SECRET_KEY: ci-only-placeholder-key-0123456789abcdef
