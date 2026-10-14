@@ -6,8 +6,8 @@ Aerofare is a flight-booking REST API (FastAPI, MySQL, Redis) with a React clien
 flights, book seats, pay, cancel and get refunds, and admins manage airports and flights. The part
 I cared about is correctness under concurrency: two people booking the last seat, a cancel racing
 a refund, and a client retrying a booking after a dropped response. Tests for those run against
-real MySQL and Redis in CI. One measured result: a composite index cut the rows read per route
-search from 6,778 to 36-66 on 200,000 seeded flights.
+real MySQL and Redis in CI. One measured result: on 200,000 seeded flights, a composite index cut
+the rows MySQL examines per route search from 6,518-6,821 to 16-64.
 
 ## How it handles the hard cases
 
@@ -47,21 +47,20 @@ search from 6,778 to 36-66 on 200,000 seeded flights.
 
 ## Measured: flight search
 
-`GET /flights/search` on 200,000 seeded flights, median of 6 runs of 50 calls each:
+`GET /flights/search` with a route and a one-week window, on 200,000 seeded flights. Rows examined
+is MySQL's own count, and it is identical on every run:
 
-| Search | Rows examined, before to after | Median ms, before to after |
+| Route | Flights on route | Rows examined, before to after |
 |---|---:|---:|
-| route + one week | 6,778 to 36 | 2.64 to 0.68 |
-| route + one month + class | 6,778 to 40 | 4.45 to 0.59 |
-| route only | 6,842 to 66 | 7.26 to 1.27 |
-| date only, no route (control) | 200,100 to 200,100 | 62.19 to 62.48 |
+| 27 → 28 (busiest) | 84 | 6,725 to 64 |
+| 1 → 2 | 66 | 6,778 to 36 |
+| 5 → 60 (quietest) | 31 | 6,630 to 16 |
 
-Rows examined is exact and the same on every run. The "before" timings varied a lot between runs,
-so read the speed-up as roughly 4-8x. I expected a table scan as the baseline, but MySQL was
-already intersecting two foreign-key indexes, which is why the gain is not larger. A search with no
-route is not helped at all. The method, the
-`EXPLAIN ANALYZE` plans, the index's cost and the exact commands to reproduce are in
-[docs/query-optimization.md](docs/query-optimization.md).
+Both versions run in under 2 ms on this setup, so I don't claim a speed-up. I expected a table scan
+as the baseline, but MySQL was already intersecting two foreign-key indexes. All seven routes, the
+latencies and the `EXPLAIN` plans are in [benchmarks/route_search.md](benchmarks/route_search.md),
+which `make bench` regenerates (needs Docker and uv) on the MySQL image CI uses. The method and the
+index's cost are in [docs/query-optimization.md](docs/query-optimization.md).
 
 ## What went wrong
 
@@ -111,8 +110,7 @@ Tests (they drop and recreate tables, so they refuse to run unless the database 
 TEST_DATABASE_URL=mysql+pymysql://USER:PASSWORD@localhost:3306/aerofare_test uv run pytest
 ```
 
-To reproduce the search benchmark, see the end of
-[docs/query-optimization.md](docs/query-optimization.md).
+To reproduce the search benchmark, run `make bench` (needs Docker).
 
 ## Limits and decisions
 

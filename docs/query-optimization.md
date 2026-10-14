@@ -1,54 +1,54 @@
 # Flight search: one index, measured
 
-`GET /flights/search` filters flights by route and dates. On 200,000 flights, adding one composite index cut
-the rows MySQL reads for a route search from 6,778 to between 36 and 66, and the median query time from
-2.6-7.3 ms to 0.6-1.3 ms, about 4-8x. A search by date alone is not helped and still scans the whole table.
+`GET /flights/search` filters flights by route and dates. On 200,000 seeded flights, adding one composite index
+cut the rows MySQL examines for a one-week route search from 6,518-6,821 to 16-64, across seven busy and quiet
+routes. Both versions run in under 2 ms on this setup, so I do not claim a speed-up. The numbers come from
+[benchmarks/route_search.md](../benchmarks/route_search.md), which `make bench` regenerates.
 
 ## Result
 
-Six runs on each side: two freshly seeded databases with the same rows, three runs each. Each run is the
-median of 50 timed calls after 10 warm-up calls. The table shows the median of the six runs, and the range
-across them.
+Rows examined is MySQL's own count (`performance_schema.events_statements_history.ROWS_EXAMINED`), not an
+`EXPLAIN` estimate. It was identical on every call and across separate runs, each from a fresh database.
 
-Rows examined was identical in every run, so that column is exact. The timings are not: the "before" route
-searches moved between about 2 ms and 7 ms from run to run, while the "after" ones stayed within a few
-tenths of a millisecond. Read the speed-up as "roughly 4-8x", not as a precise figure.
+| Route | Flights on route | Rows returned | Rows examined, without → with |
+|---|---:|---:|---:|
+| 27 → 28 | 84 | 0 | 6,725 → 64 |
+| 24 → 2 | 83 | 4 | 6,732 → 51 |
+| 60 → 48 | 81 | 1 | 6,821 → 45 |
+| 1 → 2 | 66 | 2 | 6,778 → 36 |
+| 57 → 36 | 35 | 0 | 6,518 → 19 |
+| 52 → 37 | 33 | 1 | 6,578 → 17 |
+| 5 → 60 | 31 | 0 | 6,630 → 16 |
 
-| Search | Rows returned | Rows MySQL examined, before → after | Median ms before (range) | Median ms after (range) | Faster |
-|---|---:|---:|---:|---:|---:|
-| route + one week | 2 | 6,778 → 36 | 2.64 (1.84-3.54) | 0.68 (0.64-1.38) | 3.9x |
-| route + one month + class | 2 | 6,778 → 40 | 4.45 (2.16-6.70) | 0.59 (0.56-0.82) | 7.5x |
-| route only | 66 | 6,842 → 66 | 7.26 (5.58-8.05) | 1.27 (1.16-1.82) | 5.7x |
-| control: one day, no route | 100 | 200,100 → 200,100 | 62.19 (60.97-62.70) | 62.48 (60.69-65.16) | 1.0x |
-
-The last row is a control. It has no route, so an index that starts with the route cannot serve it. It is
-in the table to show where the change stops working.
+An earlier version of this page claimed a speed-up, measured by hand against a local MySQL. It did not
+reproduce on the image CI uses, so it is gone. The median latencies are in the results file.
 
 ## What was measured
 
-- **Data:** 200,000 flights between 60 airports, departures spread over 2030, generated from a fixed seed
-  (`scripts/seed_flights.py`). Routes are uniform: every airport is as busy as every other.
-- **Query:** the exact query the API runs. `build_search_query` in `app/flights/services.py` builds it, and
-  the benchmark calls the real `search_flights`, so the time includes building the ORM objects. HTTP is not
-  included.
-- **Environment:** Apple M2, MySQL 26.7.0 (Homebrew), Python 3.14.3, 2026-10-09. The InnoDB buffer pool is
-  128 MB and the table with its indexes is about 30 MB, so every run was served from memory.
+- **Data:** 200,000 flights between 60 airports, departures spread over 2030, generated from seed 42
+  (`scripts/seed_flights.py`). Routes are uniform, so the busiest route has 84 flights and the quietest 31.
+- **Query:** what the frontend sends: a route, departures from 2030-06-15 to 2030-06-21, ordered by
+  departure, at most 100 rows. `build_search_query` in `app/flights/services.py` builds it, the same function
+  the API uses.
+- **Without the index:** dropped the way the migration's downgrade drops it (a plain `DROP INDEX` fails, see
+  below). **With it:** recreated with the migration's definition. The script checks that the indexes then
+  match the schema the migrations built.
+- **Environment:** `mysql:26.7`, the image CI uses, in a fresh Docker container on a Mac (arm64).
 
 ## What was wrong
 
-I expected MySQL to use one of the automatic foreign-key indexes and then filter the rest row by row. It does
-something different. For a route search it reads **both** the `departure_airport` index (3,407 entries) and
-the `arrival_airport` index (3,369 entries) and intersects them:
+I expected a table scan. Without the index, MySQL instead reads the `departure_airport` and `arrival_airport`
+foreign-key indexes and intersects them:
 
 ```
--> Filter: (departure_airport = 1) and (arrival_airport = 2) and (start_time >= ...) and (end_time <= ...)
-    -> Intersect rows sorted by row ID  (actual time=0.122..2.12 rows=66)
-        -> Index range scan using arrival_airport over (arrival_airport = 2)   (rows=3369)
-        -> Index range scan using departure_airport over (departure_airport = 1) (rows=3407)
+type: index_merge
+key:  arrival_airport,departure_airport
+Extra: Using intersect(arrival_airport,departure_airport); Using where; Using filesort
 ```
 
-So the table was never scanned for a route search, but about 6,800 index entries were read to find 66 flights,
-and the date conditions were then applied to those 66.
+So the rows examined follow the traffic at the two airports, not on the route: the quietest route (31 flights)
+examines 6,630 rows, almost as many as the busiest (84 flights, 6,725). The date conditions and the sort are
+applied after that.
 
 ## The change
 
@@ -56,23 +56,24 @@ and the date conditions were then applied to those 66.
 Index("ix_flights_route_start_time", "departure_airport", "arrival_airport", "start_time")
 ```
 
-Two equalities (the route), then a range (the start date). That is the order MySQL can walk an index in:
-it jumps to the route and reads only that route's flights from the start date onward.
+Two equalities (the route), then a range (the start date). That is the order MySQL can walk an index in: it
+jumps to the route and reads only that route's flights from the start date onward. The sort step goes away,
+because the index already holds a route's flights in departure order:
 
 ```
--> Filter: (end_time <= ...)  (actual time=0.0423..0.106 rows=2)
-    -> Index range scan using ix_flights_route_start_time
-       over (departure_airport = 1 AND arrival_airport = 2 AND '2030-06-15' <= start_time)
+type: range
+key:  ix_flights_route_start_time
+Extra: Using index condition; Using where
 ```
 
-The `end_time` condition is applied after the index, which is why "route + one week" examines 36 rows to
-return 2: the API bounds the window by `end_time`, and the index can only bound it by `start_time`.
+The `end_time` condition is applied after the index, which is why route 1 → 2 examines 36 rows to return 2:
+the API bounds the window by `end_time`, and the index can only bound it by `start_time`.
 
 ## What it costs
 
-- **Index size:** 12.5 MB → 17.5 MB, on a table with 14.5 MB of data. MySQL silently drops the
+- **Index size:** with the index, the flights table has 14.5 MB of data and 17.5 MB of indexes (printed by
+  the seed step of `make bench`). I did not measure the size without it. MySQL silently drops the
   `departure_airport` index when the new one is created, because the new one starts with the same column.
-- **Build time:** under one second for 200,000 rows (migration `2b19d14b47a1`).
 - **Writes:** not measured. Flights are created and edited rarely, and a booking updates `available_seats`,
   which is not in the index.
 - **Rolling back:** the autogenerated downgrade fails (`ERROR 1553: Cannot drop index ... needed in a foreign
@@ -80,44 +81,19 @@ return 2: the API bounds the window by `end_time`, and the index can only bound 
 
 ## What this does not show
 
-- It is one machine with a warm cache. Absolute times will differ elsewhere. The rows-examined column is the
-  part that carries over.
-- The speed-up is roughly 4-8x at 200,000 rows, where the "before" was already a few milliseconds. The row counts
-  suggest the gap grows with the table: the old plan reads every flight of two airports, the new one reads
-  one route. I did not measure larger tables.
+- It is one machine. Latency is timed from the host to MySQL in Docker, and absolute times will differ
+  elsewhere. The rows-examined column is the part that carries over.
 - Uniform routes understate busy ones. A hub-to-hub search would match many more rows on both versions.
-- A date-only search still reads all 200,000 rows (62 ms). A separate index on `start_time` would serve it.
-  I did not add one, because I have not checked how often users search without a route.
-- Search now orders by departure time and returns at most 100 rows by default. That is why the control
-  returns 100 rows and examines 200,100: it reads every row, then sorts the matches. An earlier measurement,
-  before `ORDER BY` and `LIMIT` were added, gave the same picture: 6,776 rows examined before the index and
-  a 5-9x speed-up.
+- I did not measure larger tables.
+- A date-only search cannot use this index, because it starts with the route. The benchmark does not
+  measure that search.
 
 ## Reproduce
 
-The password below is a placeholder. The database name must end in `_bench`, because `--recreate` drops it.
-
 ```bash
-export BENCH_DATABASE_URL=mysql+pymysql://USER:PASSWORD@localhost:3306/aerofare_bench
-
-# After: build the schema from the migrations (index included), seed, measure.
-uv run python -m scripts.seed_flights --recreate
-uv run python -m scripts.bench_search --label after
-
-# Before: drop the index from the same rows, refresh statistics, measure.
-# 32fa4a159ffc is the revision just before the index. Not "-1": newer
-# migrations sit on top of it.
-DATABASE_URL=$BENCH_DATABASE_URL uv run alembic downgrade 32fa4a159ffc
-mysql -e "ANALYZE TABLE aerofare_bench.flights"
-uv run python -m scripts.bench_search --label before
-
-# Put the index back.
-DATABASE_URL=$BENCH_DATABASE_URL uv run alembic upgrade head
+make bench
 ```
 
-Start every cycle from `--recreate`. The downgrade creates a `departure_airport` index explicitly, and
-unlike the automatic one, MySQL keeps it when the composite index comes back. A second downgrade on the
-same database then fails with "duplicate key name". I hit this on my own second run.
-
-`bench_search` prints the table above plus the `EXPLAIN ANALYZE` plan for each search. The two scripts are
-`scripts/seed_flights.py` and `scripts/bench_search.py`.
+Needs Docker and uv. It starts a fresh MySQL container from the image named in `.github/workflows/ci.yml`,
+seeds it, measures without and with the index, writes `benchmarks/route_search.md` and removes the container.
+The script is `scripts/bench_route_search.py`.

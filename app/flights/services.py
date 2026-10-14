@@ -34,7 +34,7 @@ def update_flight(flight_id: int , db: Session, flight: FlightUpdate) -> Flight 
 
 def build_search_query(search_params: FlightSearch) -> Select[tuple[Flight]]:
     """The SELECT behind GET /flights/search. Separate from search_flights so the
-    benchmark in scripts/bench_search.py can run, and EXPLAIN, the exact query
+    benchmark in scripts/bench_route_search.py can run, and EXPLAIN, the exact query
     the API runs."""
     stmt = select(Flight)
 
